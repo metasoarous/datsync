@@ -7,13 +7,13 @@ Datomic &lt;-> DataScript syncing/replication utilities
 
 ## TLDR
 
-You want to have Datomic on the back end and DataScript on the server?
+You want to have Datomic on the back end and DataScript on the front end?
 These are some utilities for (we hope) managing that sanely.
 
 
 ## The vision
 
-This is really just a peice of the vision.
+This is really just a piece of the vision.
 But I'll put it here until there's another place for the vision as a whole.
 
 ### Re-frame and Derived Data All The Way Down
@@ -33,12 +33,12 @@ This application architecture is based around these ideas.
 
 It picks up where they left off and says:
 
-* If we like servers and database architectures that look like one distributed persistent log structure
-  being streamed into materialized views of the data (al a Samsa)
+* If we like servers' and database's architectures that look like one distributed persistent log structure
+  being streamed into materialized views of the data (ala Samsa)
 * And we like mimicking this in a FRP-ish "Reactive-Atom Component Event Subscription" (RACES, to quote
   re-frame again) framework on the front end (al a re-frame)
 
-Then we like systems that look like this "all the way down"
+Then we like systems that look like this "all the way down".
 
 
 ### Enter Datalog (Dat(aScript|omic))
@@ -47,7 +47,7 @@ In this paradigm of FRP that has emerged here (and elsewhere actually), there is
 looking at a centralized state store on the client as a database.
 This way, everything in the UI is transactional, which is good.
 
-However, when we do this we sort of wave our hands and say "think of the atom as a db!"
+However, when we do this, we sort of wave our hands and say "think of the atom as a db!"
 But an atom is sort of an ad-hoc db.
 It has (limited but sufficient) transaction semantics, but doesn't care about the data inside.
 If we have complex data, being able to draw relations between the data becomes hugely advantageous.
