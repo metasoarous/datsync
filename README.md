@@ -2,201 +2,165 @@
 
 Datomic &lt;-> DataScript syncing/replication utilities
 
-(AKA Datalog all the way down)
+
+## Introduction
+
+This library offers tools for building DataScript databases as materialized views (very much in the re-frame/samsa sense) of some master Datomic database.
+
+It is hoped that we'll also eventually be able to provide tools for doing bidirectional syncing, giving us optimistic updates and offline functionality on clients.
+For now, I hope this restricted scope will be something we can build upon.
+
+From here:
+
+* For more in depth documentation (including the [big picture system vision](http://github.com/metasoarous/datsync/wiki/The-Vision) and this library's [current limitations and future directions](http://github.com/metasoarous/datsync/wiki/Current-limitations-and-future-directions)), see the [datsync GitHub wiki](https://github.com/metasoarous/datsync/wiki). 
+* If you're more interested in a quickstart and API tour, read on.
+* The source is also heavily documented (though there's need of some cleanup there)
 
 
-## TLDR
+## Quickstart
 
-You want to have Datomic on the back end and DataScript on the server?
-These are some utilities for (we hope) managing that sanely.
-
-
-## The vision
-
-This is really just a peice of the vision.
-But I'll put it here until there's another place for the vision as a whole.
-
-### Re-frame and Derived Data All The Way Down
-
-Stop right now and go do two things:
-Read the re-frame README, then watch the video the author keeps going on about (Turning the database inside
-out with apache samsa).
-
-From the re-frame README (discussing the qualification of describing re-frame as FRP-like in nature):
-
-> But, these days, FRP seems to have become a "big tent" (a broad church?). Broad enough perhaps that re-frame
-> can be in the far, top, left paddock of the tent, via a series of qualifications: re-frame has "discrete,
-> dynamic, asynchronous, push FRP-ish-nature" without "glitch free" guarantees. (Surprisingly, "glitch" has
-> specific meaning in FRP).
-
-This application architecture is based around these ideas.
-
-It picks up where they left off and says:
-
-* If we like servers and database architectures that look like one distributed persistent log structure
-  being streamed into materialized views of the data (al a Samsa)
-* And we like mimicking this in a FRP-ish "Reactive-Atom Component Event Subscription" (RACES, to quote
-  re-frame again) framework on the front end (al a re-frame)
-
-Then we like systems that look like this "all the way down"
+Currently, I recommend using the [lein-git-deps](https://github.com/tobyhede/lein-git-deps) plugin to require
+this library.
+We'll try to get something usable up on Clojars soon though.
 
 
-### Enter Datalog (Dat(aScript|omic))
+### On the client
 
-In this paradigm of FRP that has emerged here (and elsewhere actually), there is the recurring theme of
-looking at a centralized state store on the client as a database.
-This way, everything in the UI is transactional, which is good.
+First, the namespace:
 
-However, when we do this we sort of wave our hands and say "think of the atom as a db!"
-But an atom is sort of an ad-hoc db.
-It has (limited but sufficient) transaction semantics, but doesn't care about the data inside.
-If we have complex data, being able to draw relations between the data becomes hugely advantageous.
-And this has to do with the structure of the data we put inside.
+```clojure
+(require '[datsync.client.core :as datsync]
+         '[datascript.core :as d])
+```
 
-But DataScript is an actual database.
-The structure of the (DataScript) database value we put in a DataScript `conn` object (which is really just a
-gussied (read: listener-metadata-laden) up atom) has the semantics we'd want from thinking relationally about
-a database of datoms.
-So why mess with cursors and lenses into ad hoc databases (which is error prone and performance troubled) when
-we can  ...
-Re-frame gets around cursors and lenses with an event log and reactions.
-We just make things more direct by making the log queryable with Datalog.
-And we can still trigger things reactively based on queries with posh (link pending XXX; look it up, it's so
-good), giving us the best of both worlds.
+Next we'll create our database connection, and load it with some datsync specific schema:
 
-### The database of tomorrow (or whatever it's called XXX)
+```clojure
+(def conn (d/create-conn datsync/base-schema))
+```
 
-Tonsky's talk... find link.
+While there are no restrictions presently as to what methods you may use for sending messages between client
+and server, we'll show you roughly how you'd set things up using [Sente](https://github.com/ptaoussanis/sente).
 
-### Is this the thing?
+#### Getting data into the client db
 
-I don't know.
-Maybe.
+You'll need the client to receive data from the server as transactions.
 
-I know other smart people have thought about this problem.
-I think I just happened to be able to build out the basic building blocks in such a way that we have something
-to build around, in dialogue, idea and implementation.
+Assuming we have a `push-msg-handler` multimethod set up which dispatches on the message id, we can intercept
+messages with an id of (e.g.) `:datsync/tx-data`, and handle them as follows:
 
-If this is the thing, it's gonna be awesome once it's built.
+```clojure
+(defmethod push-msg-handler :datsync/tx-data
+  [[_ tx-data]]
+  (datsync/apply-remote-tx! conn tx-data))
+```
 
+The `datsync/apply-remote-tx!` function takes your DataScript `conn` and a collection of transaction forms
+(should be compatible with any Datomic transaction form), and applies that to the `conn`.
 
-## The model
+It's worth noting a few things about this function:
 
-The overall model is that we would like to have front end DataScript databases which are a materialized view
-(al a Re-frame/Turning the DB inside out terminology) of a master Datomic database.
-There are multiple approaches to accomplishing this, and the tradeoffs between them depend on the situation.
-A lot of these tradeoffs are classical distributed systems PAC Theorem tradeoffs.
+* It expands nested maps, so inner maps aren't just treated as single values in the DataScript db
+* Every entity gets a `:datsync.remote.db/id` mapping to the Datomic id
+* Local ids try to match remote ids when possible
+* Any entity specified in the transaction which has a `:db/ident` attribute will be treated as part of the
+  schema for the local `conn`'s db, and `assoc`'d into the db's `:schema` in a DataScript compatible manner
+    * Any `:db/valueType` other than `:db.type/ref` will be removed, since DataScript errors on anything other
+      than `:db.type/ref`
+    * This operation updates the db indices by creating a new database with the new schema, and moving all the
+      datoms over into it.
+    * Schema entities are included as datoms in the db, not just as `:schema`
+        * Because DataScript doesn't support idents, if you want to use this data, you'll have to jump through
+          some hoops to reference attribute metadata via the schema attribute entity
+        * This can facilitate really powerful UI patterns based on schema metadata which direct the composition
+          of UI components (in an overrideable fashion); have some WIP on this I might put in another lib eventually
+    * We can also apply schema changes to an existing database using the `datsync/update-schema!` function
 
-### Strong consistency
+#### Sending transactions to the server
 
-The simplest model, and the first (and at present only) one implemented, is one where transactions from
-clients get sent directly to the server and transacted there, with datoms from those transactions being sent
-to the clients.
-In the simplest version of the simplest model, clients get all datoms from all transactions and have all data
-in the database locally cached.
-We can deviate from this model, but it helps to conceptually separate it from the main workings of Datsync.
+When we send transactions to the server, we need to translate their entity ids to the corresponding `:datsync.remote.db/id` values.
+The `datsync/datomic-tx` utility function does this for us.
+In sente you could write a little function that wraps this as follows.
 
-In this model, because clients/secondaries are listening to transaction datoms, they get notifications about
-the transaction messages they sent.
-If a transaction fails, due to conflicts, the client is notified and (presumably) an error message is
-rendered.
+```clojure
+(defn send-tx! [tx]
+  (ws/chsk-send! [:datsync.client/tx (datsync/datomic-tx conn tx)]))
+```
 
-### Strong Eventual consistency
+### On the server
 
-It's the goal of Datsync to support strong eventual consistency, enabling optimistic updates and offline work on
-clients.
-The general model here is that a diffing system will be implemented which allows for in DB (ideally; there are
-other approaches here...) tracking of different versions of an entity.
-This work also feeds into transaction commit systems, where form views can persist "WIP" changes which then show up
-in any one else's forms (allowing for collaborative editing), but don't show up in main views of data which
-has been assumed "committed" or "confirmed" somehow by the user;
-"Oh... I didn't meant to type that..."
+Here things look pretty similar; we need to send and receive transactions.
+However, in general, things are much simpler here, since a lot of the translational work between DataScript and Datomic is set up to happen on the client side.
 
-The main obstacle towards satisfying these ideas is that DataScript does not keep transaction history.
-Datoms in DataScript are defined such that eq and hash ignore tx and added, ensuring that db memory footprint
-is kept down.
-While this is a reasonable default client side, it hinders our ability to reason about time the way we can
-in Datomic.
-This is especially unfortunate considering that these issues around distributed systems tend to come down to
-notions of time, and add only log based distributed systems have nice advantages in terms of their distributed
-properties.
-Ideally, we'd be able to "opt-in" to a DataSCript db value that did history, and tooling around
-garbage collection mechanism to deal with the memory footprint problem.
+To start, let's require the `datsync.server.core` namespace.
+
+```clojure
+(require '[datsync.server.core :as datsync])
+```
+
+#### Receiving transactions
+
+For this we'll have to set up a listener for the `:datsync.client/tx` messages that we sent from the client.
+If you're using regular http requests, you can just call this in your handler functions as you might normally handle a form submission and send a respond indicating whether the transaction went through.
+In sente, you might do something like:
 
 
-## Restricting server -> client notifications
+```clojure
+(defmethod event-msg-handler :datsync.client/tx
+  [{:as app :keys [datomic ws-connection]} {:as ev-msg :keys [id ?data]}]
+  (let [tx-report @(datsync/transact-from-client! datomic ?data)]
+    (println "Do something with:" tx-report)))
+```
 
-There are situations where syncing an entire database is fine (when there are few clients and the data is
-relatively small).
-But in general, this is not a safe assumption for scalability.
-We need some way to restrict the data which gets sent to each client.
-This is important not only for performance and scalability, but also for security;
-We shouldn't be sending data where it's not supposed to go.
+#### Sending transactions to clients
 
-### Security
+Every time we get a transaction, we want to send the results of that transaction to any client that needs to be notified.
+Eventually we can get fancy with installing subscription middleware, so for each client we have a specification of what they have "checked out", but this is just a starting point.
 
-The idea for security has already been discussed in the community.
-Datomic allows you to create db filters that only contain datoms for which certain predicates are true.
-Using predicates which filter out all entities for which a specific user does not have read authorization
-solves the read problem.
-Similarly, transactions can be tested against write authorization predicates, creating a safety net around the
-central server database.
-More pertinently to the discussion at hand though, is the issue of space.
+Assuming we just send all changes to all clients using sente, you might write a function like this as a handler:
 
-### Scope
+```clojure
+(defn handle-transaction-report!
+  [tx-deltas]
+  ;; This handler is where you would eventually set up subscriptions
+  (try
+    (ws/broadcast! ws-connection [:datsync/tx-data tx-deltas])
+    (catch Exception e
+      (log/error "Failed to send transaction report to clients!")
+      (.printStackTrace e))))
+```
 
-As long as the data pertinent to any given user is relatively small, you can probably get away with just doing
-security filters.
-However, the problem becomes more challenging when users should be expected to have access to more data than could fit
-(comfortably even) in their client's memory.
-When this becomes a problem, our strategy will be to compose reactive streams of the data.
+This handler function should take a collection `tx-deltas` of `:db/add` and `:db/retract` tx forms which will automatically get computed from the datoms created in the transaction.
+This handler function is also where you could implement your own scope restriction functionality and read authorization security protocols if needed.
 
-What this looks like is the client will specify the scope of data they wish to have "checked out".
-There might be categorical things which should just always be kept in sync for convenience, like perhaps tag or user
-preference data.
-There might be other data -- like collections of some sort relevant to the domain model -- which you want to
-selectively view based on some more restricted scope definition.
+We apply this handler function using the `datsync/start-transaction-listener!` function:
 
-### Query scopes (aka let the client components decide what data they need)
+```clojure
+(datsync/start-transaction-listener! (d/tx-report-queue conn) handle-transaction-report!)
+```
 
-Ideally, this scope definition would just be composed of Dat(sScript|omic) query or pull expressions.
-Some of these could be marked `:remote true`, indicating that the expression should be tracked on the server
-to see if any transactions there change the results of the collection.
-Maybe even for this there would have to be some gating of updates for situations where perfect real time
-could be sacrificed for scalability.
-
-On the horizon for scalability though: If you had chains of progressive filters, you could potentially build
-an onyx workflow programatically which ran the scope definitions in stages, pushing changes through at the
-very end out to clients.
-This will take some time to implement, and will come after in process server side reaction workflow.
-But think about it as on the horizon potentially.
-
-For the nearer future, reactive queries operating on Datomic peers is a reasonable assumption for some basic
-building blocks with which to begin testing this design pattern.
-And it keeps us within out cozy "data streams all the way down" paradigm we love from re-frame.
+This function currently takes the Java blocking queue returned by `d/tx-report-queue` and consumes all changes placed on that queue.
+We'll eventually make it possible to pass in a `core.async` channel as well, so you can pull messages off Datomic's single `tx-report-queue` and mult them out to various processes that needed these notifications as well.
 
 
-## How we get around not having transaction history
+### Bootstrapping
 
-I think eventually we'll find a way of coming up with something that let's us have transaction history.
-Like maybe a version of a DataScript db that has different equality and hashing semantics for its datoms (see
-above).
-But until then, we'll just use more reactive queries (all a posh).
-We can create a db which is just a filter of another, and modify their transaction functions (need
-DataScript DBRef protocol for this) such that transactions passing into one get analyzed and sent to another.
-This is the solution I'll be taking for commit functionality.
-This should get us moving for now, and may actually give us the tools we need to solve the distributed systems
-problem of strong eventual consistency as well.
+Depending on how you set things up, you may also want to set up some bootstrap message functionality on client and server to initialize the data on the front end.
+Once we have scoping functionality (as described below), we may be able to do without this (since the client will automatically be specifying what data it needs), so we won't spend to much energy on this at this point.
 
 
 ## Alpha Disclaimer
 
 Not all of the code here is the cleanest yet, and things should be considered highly unstable for the moment.
-This was just extracted from an application and needs time to settle before I can even call this beta.
-But if you want to help develop this tooling, we'd greatly welcome your contributations.
+This was just extracted from an application and needs time to settle before I can call it beta.
+But if you want to help develop this tooling, we'd greatly welcome your contributions.
 
-We'll post to the Clojure mailing list and twitter to let you know when there's somethihng that could be
-considered for beta usage.
+We'll post to the Clojure mailing list and twitter to let you know when we have something beta ready.
 
 
+## License
+
+Copyright © 2016 Christopher Small
+
+Distributed under the Eclipse Public License either version 1.0 or (at your option) any later version.
 
