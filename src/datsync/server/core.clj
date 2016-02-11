@@ -6,12 +6,27 @@
 
 ;; We need a function we can call to transact a tx-message from the client
 
+(defmulti translate-tx-form
+  (fn [tempid-map [op]] op))
+
+(defmethod translate-tx-form :db/add
+  [tempid-map [op e a v]]
+  [op (tempid-map e) a (tempid-map v)])
+
+(defmethod translate-tx-form :db/retract
+  [tempid-map [op e a v]]
+  [op (tempid-map e) a (tempid-map v)])
+
+(defmethod translate-tx-form :db.fn/retractEntity
+  [tempid-map [op e]]
+  [op (tempid-map e)])
+
 (defn transact-from-client!
   [db-conn tx]
   ;; This is where we'd want to put security measures in place;
   ;; What other translation things do we need to do here?
   (let [tempid-map (fn [n] (if (and (integer? n) (< n 0)) (d/tempid :db.part/user n) n))
-        tx' (mapv (fn [[op e a v]] [op (tempid-map e) a (tempid-map v)]) tx)]
+        tx' (mapv (partial translate-tx-form tempid-map) tx)]
     (d/transact db-conn tx')))
 
 
