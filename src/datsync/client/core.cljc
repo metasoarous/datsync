@@ -6,7 +6,6 @@
 
 ;; Datsync let's us transparently mirror and syncronize a client side DataScript database with a server side
 ;; Datascript database.
-;; This is the  .... XXX Finish
 
 
 ;; ## Transaction normalization
