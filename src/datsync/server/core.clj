@@ -4,6 +4,9 @@
 
 ;; ## Applying changes from clients
 
+;; Multimethod dispatch on op is perfect for securing what transaction functions are possible.
+;; Nothing gets called unless you said it can.
+
 ;; We need a function we can call to transact a tx-message from the client
 
 (defmulti translate-tx-form
@@ -20,6 +23,15 @@
 (defmethod translate-tx-form :db.fn/retractEntity
   [tempid-map [op e]]
   [op (tempid-map e)])
+
+;; Custom tx functions can be added by completing associated multimethod definitions.
+
+;;     (defmethod datsync/translate-tx-form :your.app.tx/function-name
+;;       [tempid-map [op arg1 arg2]
+;;       [op (tempid-map arg1) arg2])
+
+;; The first arg will be a map of the foreign ids to the local datomic ids. This can be used to translate eid
+;; args in the tx call.
 
 (defn transact-from-client!
   [db-conn tx]
