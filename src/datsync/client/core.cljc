@@ -400,6 +400,9 @@
 
 ;; This version doesn't work because it's trying to bind _all_ ?v values
 
+;; Note that this doesn't currently deal well with (for example) having a tx entry where the eid is an ident,
+;; because of what seems to be a bug in DataScript get-else. So you have to do that translation yourself to
+;; get the local eid if you want to use this function.
 (defn datomic-tx
   [conn tx]
   (let [tx (normalize-tx tx)

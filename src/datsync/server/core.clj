@@ -10,19 +10,30 @@
 ;; We need a function we can call to transact a tx-message from the client
 
 (defmulti translate-tx-form
-  (fn [tempid-map [op]] op))
+  (fn [db tempid-map [op]] op))
 
 (defmethod translate-tx-form :db/add
-  [tempid-map [op e a v]]
-  [op (tempid-map e) a (tempid-map v)])
+  [db tempid-map [op e a v]]
+  [op (tempid-map e) a (tempid-map db a v)])
 
 (defmethod translate-tx-form :db/retract
-  [tempid-map [op e a v]]
-  [op (tempid-map e) a (tempid-map v)])
+  [db tempid-map [op e a v]]
+  [op (tempid-map e) a (tempid-map db a v)])
 
 (defmethod translate-tx-form :db.fn/retractEntity
-  [tempid-map [op e]]
+  [db tempid-map [op e]]
   [op (tempid-map e)])
+
+;; Should build a transaction function to do this thing but make it optional (performance concerns; don't want
+;; to have to restrict all to go through transaction; should do reactions or something here to acheive an
+;; alternate approach to consistency?)
+(def remote-tx-schema
+  [{:db/id -1
+    :db/ident :datsync/remote-tx
+    :db/fn #db/fn {:lang "clojure"
+                   :params [db tx]
+                   :code '()}}])
+
 
 ;; Custom tx functions can be added by completing associated multimethod definitions.
 
@@ -33,12 +44,35 @@
 ;; The first arg will be a map of the foreign ids to the local datomic ids. This can be used to translate eid
 ;; args in the tx call.
 
+
+(defn reverse-ref-attribute?
+  [attr-kw]
+  (= \_ (first (name attr-kw))))
+
+(defn tempid-map
+  ([e]
+   (if (and (integer? e) (< e 0)) (d/tempid :db.part/user e) e))
+  ([db a e]
+   (if (and (keyword? a)
+            ;; Note; this doesn't cover reverse reference attributes...
+            (or (reverse-ref-attribute? a)
+                (d/q '[:find ?a . :in $ ?a-ident :where [?a :db/ident ?a-ident] [?a :db/valueType :db.type/ref]] db a))
+            ;; for the attribute...
+            (integer? e)
+            (< e 0))
+     (d/tempid :db.part/user e)
+     e)))
+
+;; Could maybe do something more efficient here for the tempid-map in the future.
+;; Like preload all of tempid mappings in a relation that we put into a map, and pass around.
+;; For now though, just separate queries to keep things simple.
+
 (defn transact-from-client!
   [db-conn tx]
   ;; This is where we'd want to put security measures in place;
   ;; What other translation things do we need to do here?
-  (let [tempid-map (fn [n] (if (and (integer? n) (< n 0)) (d/tempid :db.part/user n) n))
-        tx' (mapv (partial translate-tx-form tempid-map) tx)]
+  (let [db (d/db db-conn)
+        tx' (mapv (partial translate-tx-form db tempid-map) tx)]
     (d/transact db-conn tx')))
 
 
