@@ -305,7 +305,6 @@
                    (assoc m' v (get-or-assign-local-eid db m' v)))
                  m))))
 
-
 ;; Translate eids in the system
 (defn translate-eids
   "Takes a tx in canonical form and changes any incoming eids (including reference ids (WIP XXX)) to equivalents consistent with the local db. It does this
@@ -398,11 +397,16 @@
 ;; ## Sending data back
 ;; --------------------
 
+;; Uhh... not sure what the following comment means or if it's been fixed
 ;; This version doesn't work because it's trying to bind _all_ ?v values
 
 ;; Note that this doesn't currently deal well with (for example) having a tx entry where the eid is an ident,
 ;; because of what seems to be a bug in DataScript get-else. So you have to do that translation yourself to
 ;; get the local eid if you want to use this function.
+
+;; This should be reworked in terms of multimethods, so you can create translations for your own tx functions,
+;; just like you can for the client XXX
+;; Needs to be reworked overall as well
 (defn datomic-tx
   [conn tx]
   (let [tx (normalize-tx tx)
