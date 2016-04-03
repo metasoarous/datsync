@@ -2,7 +2,7 @@
 
 Datomic &lt;-> DataScript syncing/replication utilities
 
-[![Gitter](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/metasoarous/semantic-csv?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
+[![Gitter](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/metasoarous/datsync?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
 ## Introduction
 
@@ -13,8 +13,9 @@ For now, I hope this restricted scope will be something we can build upon.
 
 From here:
 
+* For a look at the patterns datsync enables, see [Catalysis](https://github.com/metasoarous/catalysis) and it's [chatroom](https://gitter.im/metasoarous/catalysis)
 * For more in depth documentation (including the [big picture system vision](http://github.com/metasoarous/datsync/wiki/The-Vision) and this library's [current limitations and future directions](http://github.com/metasoarous/datsync/wiki/Current-limitations-and-future-directions)), see the [datsync GitHub wiki](https://github.com/metasoarous/datsync/wiki).
-* If you like to chat, join us in the [posh chatroom](https://gitter.im/metasoarous/semantic-csv).
+* If you like to chat, join us in the [datsync chatroom](https://gitter.im/metasoarous/datsync).
 * If you're more interested in a quickstart and API tour, read on.
 * The source is also heavily documented (though there's need of some cleanup there).
 
