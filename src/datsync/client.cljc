@@ -84,9 +84,6 @@
     (filter (comp schema-eids second) tx)))
 
 
-;; XXX talk: pain points in datascript/datalog: idents, transaction functions, non-queryable schema, having to
-;; do transactions by yourself
-
 (defn ref-ident-or-value
   [db attr v]
   (or
@@ -137,17 +134,10 @@
 ;; ## Transaction middleware
 ;; -------------------------
 
-;; We need to be able to atomically modify transactions based on current db state before committing changes.
-;; We can't unfortunately just do these modifications on a dereffed conn db and then pass those modications
-;; into d/transact!, since if something had changed in the db since it was dereffed, we'd have an
-;; inconsistency.
-
-;; The big challenge here is going to be to figure out how to make this play nicely with the rest of the
-;; system around datascript here.
-;; The best approach will probably be to either add this middleware functionality directly into DataScript, or
-;; potentially better (and with more leverage), create a DataScriptConnection protocol (or protocols;
-;; Transactable in particular) that let us build our own DataScript compatible connections that have added
-;; functionality.
+;; We need some special magick transaction function that updates the datascript schema and applies middleware
+;; to the transactions. The latter bit could probably be better served by transaction functions (didn't
+;; realize they are supported in DataScript, just differently when I wrote this...). It's possible we could
+;; tease the latter concern to actually use transaction functions, but for now this does the trick.
 
 (defn comp-tx-middleware
   [db fns]
@@ -182,6 +172,7 @@
     @report))
 
 ;; ## datasync/transact! ?
+
 ;; This is really just a more general uber-transact thing; or some more general/powerful transaction behaviour
 ;; specification mechanism. We're also adding schema changes to 
 (defn ^:export transact-with-middleware!
@@ -204,7 +195,7 @@
 
 ;; We'll be using first class transaction metadata to track what transactions need to be validated on the
 ;; server, which have been validated, which need to be retracted, and which should remain local without
-;; sending to the server.
+;; sending to the server. At least eventually... nothing like that yet.
 
 (defn tx-metadata
   "Given a tx-report, return transaction representing metadata about the transaction"
@@ -337,15 +328,13 @@
 ;; is not flagged as :datsync/sync? false.
 
 (defn wrap-remote-tx
-  "Here we add data we need to track the origin of the data (that we don't need to "
+  "Here we add data we need to track the origin of the data (that we don't need to )"
   ([db tx other-tx-meta]
    (let [tx (->> tx
                  normalize-tx
-                 (translate-eids db)
-                 )
+                 (translate-eids db))]
          ;remote-tx-meta {:datasync.tx/origin :datsync.tx.origin/remote}
          ;tx-report (d/with db tx (merge remote-tx-meta other-tx-meta))
-         ]
      tx)))
      ;(concat tx
              ;(tx-metadata tx-report)))))
@@ -397,9 +386,6 @@
 ;; ## Sending data back
 ;; --------------------
 
-;; Uhh... not sure what the following comment means or if it's been fixed
-;; This version doesn't work because it's trying to bind _all_ ?v values
-
 ;; Note that this doesn't currently deal well with (for example) having a tx entry where the eid is an ident,
 ;; because of what seems to be a bug in DataScript get-else. So you have to do that translation yourself to
 ;; get the local eid if you want to use this function.
@@ -407,6 +393,7 @@
 ;; This should be reworked in terms of multimethods, so you can create translations for your own tx functions,
 ;; just like you can for the client XXX
 ;; Needs to be reworked overall as well
+
 (defn datomic-tx
   [conn tx]
   (let [tx (normalize-tx tx)
@@ -446,7 +433,7 @@
 ;; ## Staging changes and commits
 ;; ------------------------------
 
-;; We now need to build staging into the datasync application stack.
+;; We'll eventually need to build staging into the datsync application stack.
 ;; Say someone opens a form for an entity and starts editing, but hasn't explicitly confirmed their changes.
 ;; We'd like for the data to be instantly accessible to any other forms open for the same entity on other
 ;; secondaries (client datascript dbs).
@@ -456,7 +443,6 @@
 
 ;; We need to build in transactions...
 ;; So we can query across them for most recently committed datoms
-;; 
 
 
 
@@ -469,12 +455,6 @@
 ;; and computes k' = (hash [k :hash]).
 ;; The next member of the checksum sequence would be (hash [k' :hash]), etc.
 ;; This gives us a sequence of hash values which should let us simply ensure consistency.
-
-;; Oh; we should use the datomic transaction log eids in the hashing perhaps? That way there is a single
-;; source of truth.
-;; Or maybe it should be a set of transactions it still has?
-
-;; Clients should have strong eventual consistency.
 
 
 
