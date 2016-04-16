@@ -1,4 +1,4 @@
-(ns datsync.shared.utils
+(ns datsync.impl.utils
   (:require #?(:clj [clojure.core.match :as match :refer [match]]
                :cljs [cljs.core.match :refer-macros [match]])))
 

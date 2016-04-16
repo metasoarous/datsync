@@ -1,4 +1,4 @@
-(ns datsync.server.core
+(ns datsync.server
   (:require [datomic.api :as d]))
 
 
@@ -67,7 +67,8 @@
 ;; Like preload all of tempid mappings in a relation that we put into a map, and pass around.
 ;; For now though, just separate queries to keep things simple.
 
-(defn transact-from-client!
+(defn apply-remote-tx!
+  "Takes a client transaction and transacts it"
   [db-conn tx]
   ;; This is where we'd want to put security measures in place;
   ;; What other translation things do we need to do here?
@@ -82,7 +83,7 @@
 ;; 
 ;;    (defmethod event-msg-handler :datsync.client/tx
 ;;      [{:as app :keys [datomic ws-connection]} {:as ev-msg :keys [id ?data]}]
-;;      (let [tx-report @(datsync/transact-from-client! datomic ?data)]
+;;      (let [tx-report @(datsync/apply-remote-tx! datomic ?data)]
 ;;        (println "Do something with:" tx-report)))
 
 

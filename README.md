@@ -31,7 +31,7 @@ We'll try to get something usable up on Clojars soon though.
 First, the namespace:
 
 ```clojure
-(require '[datsync.client.core :as datsync]
+(require '[datsync.client :as datsync]
          '[datascript.core :as d])
 ```
 
@@ -97,7 +97,7 @@ However, in general, things are much simpler here, since a lot of the translatio
 To start, let's require the `datsync.server.core` namespace.
 
 ```clojure
-(require '[datsync.server.core :as datsync])
+(require '[datsync.server :as datsync])
 ```
 
 #### Receiving transactions
@@ -110,7 +110,7 @@ In sente, you might do something like:
 ```clojure
 (defmethod event-msg-handler :datsync.client/tx
   [{:as app :keys [datomic ws-connection]} {:as ev-msg :keys [id ?data]}]
-  (let [tx-report @(datsync/transact-from-client! datomic ?data)]
+  (let [tx-report @(datsync/apply-remote-tx! datomic ?data)]
     (println "Do something with:" tx-report)))
 ```
 

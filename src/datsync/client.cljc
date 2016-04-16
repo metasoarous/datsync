@@ -1,7 +1,7 @@
-(ns datsync.client.core
+(ns datsync.client
   "# Datsync client API"
   (:require [datascript.core :as d]
-            [datsync.shared.utils :as utils]))
+            [datsync.impl.utils :as utils]))
 
 
 ;; Datsync let's us transparently mirror and syncronize a client side DataScript database with a server side
@@ -484,29 +484,4 @@
 ;; Should be careful about :db/retract above (assumes all :db/add)
 
 
-
-;; ## Sync scoping description
-;; ---------------------------
-
-;; First let's create a mock description of what we want to keep in sync
-
-(def base-sync-description
-  ;; Schema
-  [{:query '[:find (pull ?e [*]) :where [?e :db/ident]]}
-   ;; This should cover all other things that should always stay in sync
-   {:query '[:find (pull ?e [*]) :where [?e :e/type :?t] [?t :e.type/always-sync true]]}
-   ])
-
-
-(defn search-sync
-  ([query-string]
-   (search-sync query-string {}))
-  ([query-string {:as window :keys [type count page] :or {type :paginate count 10 page 0}}]
-   {:query-type :search-query
-    :query query-string
-    ;; Or should it be called scope?
-    :window
-    ;; This is where it might need to know something from the view; this is what makes the posh idea
-    ;; potentially brilliant; we never need to specify a window
-    window}))
 
