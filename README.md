@@ -22,10 +22,11 @@ From here:
 
 ## Quickstart
 
-Currently, I recommend using the [lein-git-deps](https://github.com/tobyhede/lein-git-deps) plugin to require
-this library.
-We'll try to get something usable up on Clojars soon though.
+First, add the following to your `porject.clj`:
 
+```
+[datsync "0.0.1-SNAPSHOT"]
+```
 
 ### On the client
 
