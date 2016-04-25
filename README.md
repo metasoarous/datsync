@@ -16,6 +16,7 @@ For now, I hope this restricted scope will be something we can build upon.
 
 From here:
 
+* Clojure/West 2016 talk: [Datalog all the way down](https://www.youtube.com/watch?v=aI0zVzzoK_E)
 * For a look at the patterns datsync enables, see [Catalysis](https://github.com/metasoarous/catalysis) and it's [chatroom](https://gitter.im/metasoarous/catalysis)
 * For more in depth documentation (including the [big picture system vision](http://github.com/metasoarous/datsync/wiki/The-Vision) and this library's [current limitations and future directions](http://github.com/metasoarous/datsync/wiki/Current-limitations-and-future-directions)), see the [datsync GitHub wiki](https://github.com/metasoarous/datsync/wiki).
 * If you like to chat, join us in the [datsync chatroom](https://gitter.im/metasoarous/datsync).
