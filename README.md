@@ -26,7 +26,7 @@ From here:
 
 ## Quickstart
 
-First, add the following to your `porject.clj`:
+First, add the following to your `project.clj`:
 
 ```
 [datsync "0.0.1-SNAPSHOT"]
