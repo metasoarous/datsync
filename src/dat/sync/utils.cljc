@@ -1,6 +1,9 @@
-(ns datsync.impl.utils
-  (:require #?(:clj [clojure.core.match :as match :refer [match]]
-               :cljs [cljs.core.match :refer-macros [match]])))
+(ns dat.sync.utils
+  (:require #?@(:clj [[clojure.core.match :as match :refer [match]]
+                      [clojure.tools.logging :as log]]
+                :cljs [[cljs.core.match :refer-macros [match]]
+                       [cljs.pprint]])))
+
 
 (declare inner-merge)
 
@@ -34,10 +37,14 @@
      ;; default to the second value in any other case
      :else y)))
 
+(defn log [& args]
+  #?(:cljs (apply js/console.log args)
+     :clj (log/info (first args) (rest args))))
+
 
 (defn tr
   ([message x]
-   (println message (with-out-str (#?(:clj clojure.pprint/pprint :cljs cljs.pprint/pprint) x)))
+   (log message (with-out-str (#?(:clj clojure.pprint/pprint :cljs cljs.pprint/pprint) x)))
    x)
   ([x]
    (tr "" x)))
