@@ -7,6 +7,7 @@
             [dat.sync.utils :as utils]
             [dat.spec.protocols :as protocols]
             [com.stuartsierra.component :as component]
+            [taoensso.timbre :as log #?@(:cljs [:include-macros true])]
             [taoensso.sente :as sente]
             [taoensso.sente.packers.transit :as sente-transit]))
 
@@ -31,7 +32,7 @@
           sente-fns (sente/make-channel-socket! "/chsk" {:type :auto :packer packer})
           ch-recv (:ch-recv sente-fns)]
       ;; Set Sente to pipe it's events such that they all (at the top level) fit the standard re-frame shape
-      (async/pipeline 1 out-chan (map (fn [x] [::event x])) ch-recv)
+      (async/pipeline 1 out-chan (map (fn [x] [::event (:event x)])) ch-recv)
       ;; Return component with state assoc'd in
       (merge component
              sente-fns
@@ -61,33 +62,37 @@
 (reactor/register-handler
   ::event
   (fn [app db [_ sente-message]]
-    (println "Message keys:" (keys sente-message))))
+    (log/debug "Sente message recieved:" (first sente-message))
+    (reactor/resolve-to app db [sente-message])))
 
 (reactor/register-handler
   :chsk/state
   (fn [app db [_ {:as ev-msg :keys [?data]}]]
-    (utils/log "chsk/state data:" (pr-str ev-msg))
-    (let [open? (:open? (:remote app))
-          mark-open! (fn [& args] ())]
-      (if (and (:first-open? ?data) (not @open?))
-        (reactor/with-effects
-          [[:dat.remote/opened]
-           [:dat.reactor/console-log "Channel socket state change: %s" (pr-str ?data)]]
-          (reactor/resolve-to app db
-            [[:dat.reactor/console-log "Channel socket successfully established! Sending bootstrap request."]
-             [:dat.remote/send-event! [:dat.sync.client/bootstrap nil]
-               ;; Dev hack; Sets the open? state of the remote system; Should maybe put this in DB
-               (reset! open? true)]]))))))
+    (try
+      (if (:first-open? ev-msg)
+        (reactor/with-effect [:dat.remote/send-event! [:dat.sync.client/bootstrap nil]]
+          db)
+        db)
+      (catch #?(:clj Exception :cljs :default) e
+        (log/error "Exception handling :chsk/state:" e)))))
+
+(reactor/register-handler
+  :chsk/handshake
+  ;(fn [app db {:as ev-msg :keys [?data]}]
+  (fn [app db [_ {:as ev-msg :keys [?data]}]]
+    (log/warn "You should probably write something here! This is a no-op.")
+    (log/debug "Calling :chsk/handshake with:" ev-msg)
+    ;; This is just to deal with how sente organizes things on it's chans; If we wanted though, we could
+    ;; manually track things here
+    db))
 
 (reactor/register-handler
   :chsk/recv
   ;(fn [app db {:as ev-msg :keys [?data]}]
   (fn [app db [_ {:as ev-msg :keys [?data]}]]
-    (println "XXX Anything here?" ev-msg)
     ;; This is just to deal with how sente organizes things on it's chans; If we wanted though, we could
     ;; manually track things here
     (reactor/resolve-to app db
-      [?data
-        db])))
+      [?data])))
 
 

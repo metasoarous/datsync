@@ -1,7 +1,15 @@
 (ns dat.remote
   (:require [dat.reactor :as reactor]
-            #?(:clj [clojure.tools.logging :as log])
+            [taoensso.timbre :as log #?@(:cljs [:include-macros true])]
             [dat.spec.protocols :as protocols]))
+
+
+;; Event handlers should actually just be transaction functions.
+;; Most of the time.
+;; But there are some operations for which this isn't quite right.
+;; Maybe we just treat those separately and pass the rest through?
+;; That might be the nicest way to handle things.
+;; Since then, effects are just data that you accrue along with the unfolding transaction.
 
 ;; Just registering some handlers; Make sure to load this code!
 
@@ -16,14 +24,9 @@
   [remote]
   (protocols/remote-event-chan remote))
 
-;; Wish I had docs for this; Create event/effect hooks for sending events.
 (reactor/register-effect
   ::send-event!
   (fn [app db [event-id server-event]]
-    (send-event! (:remote app) server-event)))
-
-(reactor/register-effect
-  ::send-event!
-  (fn [app db [event-id server-event]]
+    (log/info "send-event! called")
     (send-event! (:remote app) server-event)))
 

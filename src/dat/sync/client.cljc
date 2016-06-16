@@ -4,12 +4,13 @@
   (:require #?@(:clj [[clojure.core.async :as async :refer [go go-loop]]]
                 :cljs [[cljs.core.async :as async]])
             [dat.spec.protocols :as protocols]
-            [com.stuartsierra.component :as component]
             [dat.remote :as remote]
             [dat.reactor :as reactor]
             [dat.reactor.dispatcher :as dispatcher]
             [dat.sync.utils :as utils]
-            [datascript.core :as d]))
+            [datascript.core :as d]
+            [com.stuartsierra.component :as component]
+            [taoensso.timbre :as log #?@(:cljs [:include-macros true])]))
 
 
 ;; Datsync let's us transparently mirror and syncronize a client side DataScript database with a server side
@@ -560,10 +561,9 @@
   :dat.sync.client/bootstrap
   (fn [app db [_ tx-data]]
     ;; Possibly flag some state somewhere saying bootstrap has taken place?
+    (log/info "Revieved bootstrap!")
     (reactor/resolve-to app db
-      [[::recv-remote-tx tx-data]])
-    (utils/log "Recieved bootstrap")
-    (apply-remote-tx! (:conn app) tx-data)))
+      [[::recv-remote-tx tx-data]])))
 
 
 ;; This is just a little glue; A system component that plugs in to pipe messages from the remote to the
