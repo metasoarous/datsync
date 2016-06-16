@@ -93,7 +93,7 @@
 (def ident-pulls
   (into {} (map (fn [ident] [ident '[*]]) schema-idents)))
 
-(def schema-query [:find [('pull '?e ['* ident-pulls]) '...]
+(def schema-query [:find [(list 'pull '?e ['* ident-pulls]) '...]
                    :where '[?e :db/ident]])
 
 (defn replace-ident
@@ -102,8 +102,8 @@
 
 (defn schema
   [db]
+  ;; Why doesn't this query work? XXX Very strange; Pickup.
   (let [schema (d/q schema-query db)]
-    (log/info "Have schema in schema")
     (into
       {}
       (map
