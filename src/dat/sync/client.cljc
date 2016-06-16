@@ -567,7 +567,7 @@
   (fn [app db [_ tx]]
     (let [translated-tx (datomic-tx db tx)]
       ;; log directly in handler function to make sure a failure doesn't preclude log execution
-      (utils/log "Sending tx:" (pr-str (take 100 translated-tx)) "...")
+      (log/info "Sending tx:" (pr-str (take 100 translated-tx)) "...")
       (reactor/resolve-to app db
         [[:dat.remote/send-event! [:dat.sync.remote/tx translated-tx]]]))))
 
