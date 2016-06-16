@@ -542,11 +542,10 @@
   ::apply-schema-changes
   (fn [app db [_ schema-changes]]
     ;; Have to make sure schema with changes and replace schema don't need the :ident
-    (log/info "Applying schema changes:" schema-changes)
+    ;; Would be nice to log idents
+    (log/info "Applying schema changes!")
     (let [new-schema (schema-with-changes db schema-changes)
-          _ (log/info "Have schema with changes")
           new-db (replace-schema db new-schema)]
-      (log/info "New schema-with-changes:" new-schema)
       new-db)))
 
 ;; May need to separate the schema and the "other" data, but for now, we'll leave it at this
