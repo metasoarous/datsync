@@ -103,6 +103,7 @@
 (defn schema
   [db]
   (let [schema (d/q schema-query db)]
+    (log/info "Have schema in schema")
     (into
       {}
       (map
@@ -122,12 +123,20 @@
   ([db tx]
    (let [schema (:schema db)
          new-ident-changes (tx-schema-changes tx)
-         old-ident-eids (d/q '[:find [?e ...] :where [?e :db/ident]])]
-     (->> tx
-          (filter (comp old-ident-eids #(nth % 2)))
-          (concat new-ident-changes)
-          distinct
-          vec)))
+         old-ident-eids (set (d/q '[:find [?e ...] :where [?e :db/ident]]))
+         changes-to-old-eids (filter
+                               (fn [[op e a v :as datom]]
+                                 (try
+                                   (old-ident-eids e)
+                                   (catch #?(:clj Exception :cljs :default) e
+                                     (log/error e "Failed to grok datom in tx-schema-changes"))))
+                               tx)
+         tx
+         (->> changes-to-old-eids
+              (concat new-ident-changes)
+              distinct
+              vec)]
+     tx))
   ([tx]
    (let [schema-eids (set (map second (filter (comp (partial = :db/ident) #(nth % 2)) tx)))]
      (filter (comp schema-eids second) tx))))
@@ -159,9 +168,12 @@
   the merge of this schema data into the db's existing schema definition."
   {:todo "Implement ability to process/consider schema changes after database has already been set up"}
   [db tx]
+  (log/info "Calling schema-with-changes")
   (let [tx (normalize-tx tx) ;; all non public functions should assume this already...
         db' (d/db-with db tx)
-        new-schema (d/q schema-query db')]
+        _ (log/info "With db")
+        new-schema (schema db')]
+    (log/info "Done with schema-with-changes")
     (merge (:schema db) new-schema)))
     ;; Replaced all of this; Total nightmare
     ;(->> tx
@@ -530,21 +542,25 @@
   ::apply-schema-changes
   (fn [app db [_ schema-changes]]
     ;; Have to make sure schema with changes and replace schema don't need the :ident
+    (log/info "Applying schema changes:" schema-changes)
     (let [new-schema (schema-with-changes db schema-changes)
+          _ (log/info "Have schema with changes")
           new-db (replace-schema db new-schema)]
+      (log/info "New schema-with-changes:" new-schema)
       new-db)))
 
 ;; May need to separate the schema and the "other" data, but for now, we'll leave it at this
 (reactor/register-handler
   ::recv-remote-tx
   (fn [app db [_ tx-data]]
+    (log/info "Running remote-tx in :dat.sync/recv-remote-tx.")
     (let [normalized-tx (normalize-tx tx-data)
-          schema-changes (seq (tx-schema-changes db normalized-tx))]
-      (reactor/with-effect
-        [:dat.reactor/console-log "Commited remote transaction"]
-        (reactor/resolve-to app db
-          [(when schema-changes [::apply-schema-changes schema-changes])
-           [:dat.reactor/local-tx normalized-tx]])))))
+          _ (log/info "Normalized tx")
+          schema-changes (seq (tx-schema-changes db normalized-tx))
+          _ (log/info "Schema changes")]
+      (reactor/resolve-to app db
+        [(when schema-changes [::apply-schema-changes schema-changes])
+         [:dat.reactor/local-tx normalized-tx]]))))
 
 ;; Triggers
 (reactor/register-handler
@@ -561,7 +577,7 @@
   :dat.sync.client/bootstrap
   (fn [app db [_ tx-data]]
     ;; Possibly flag some state somewhere saying bootstrap has taken place?
-    (log/info "Revieved bootstrap!")
+    (log/info "Revieved bootstrap!" (take 10 tx-data))
     (reactor/resolve-to app db
       [[::recv-remote-tx tx-data]])))
 
@@ -573,7 +589,7 @@
   component/Lifecycle
   (start [component]
     (let [remote-chan (remote/event-chan remote)]
-      (println "Starting Datsync component")
+      (log/info "Starting Datsync component")
       (go-loop []
         (let [event (async/<! remote-chan)]
           (dispatcher/dispatch! dispatcher event)

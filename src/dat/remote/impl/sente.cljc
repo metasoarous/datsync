@@ -26,7 +26,7 @@
 (defrecord SenteRemote [chsk ch-recv out-chan send-fn state open?]
   component/Lifecycle
   (start [component]
-    (println "Starting SenteRemote Component")
+    (log/info "Starting SenteRemote Component")
     (let [out-chan (or out-chan (async/chan 100))
           packer (sente-transit/get-flexi-packer :edn)
           sente-fns (sente/make-channel-socket! "/chsk" {:type :auto :packer packer})
@@ -39,10 +39,15 @@
              {:out-chan out-chan
               :open? (atom false)})))
   (stop [component]
-    (when ch-recv (async/close! ch-recv))
-    (when out-chan (async/close! out-chan))
-    (utils/log "WebSocket connection stopped")
-    component)
+    (log/info "Stopping SenteRemote component")
+    (try
+      ;(when out-chan (async/close! out-chan))
+      ;(when ch-recv (async/close! ch-recv))
+      (log/debug "SenteRemote stopped successfully")
+      (assoc component :ch-recv nil :out-chan nil)
+      (catch #?(:clj Exception :cljs :default) e
+        (log/error "Error stopping SenteRemote:" e)
+        component)))
   protocols/PRemoteSendEvent
   (send-event! [component event]
     (send-fn event))
@@ -89,10 +94,11 @@
 (reactor/register-handler
   :chsk/recv
   ;(fn [app db {:as ev-msg :keys [?data]}]
-  (fn [app db [_ {:as ev-msg :keys [?data]}]]
+  (fn [app db [_ event]]
     ;; This is just to deal with how sente organizes things on it's chans; If we wanted though, we could
     ;; manually track things here
+    (log/info ":chsk/recv for event-id:" (first event))
     (reactor/resolve-to app db
-      [?data])))
+      [event])))
 
 
