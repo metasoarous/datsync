@@ -1,4 +1,4 @@
-(defproject datsync "0.0.1-SNAPSHOT"
+(defproject datsync "0.0.1-alpha0"
   :description "Datomic <-> DataScript syncing/replication utilities"
   :url "http://github.com/metasoarous/datsync"
   :license {:name "Eclipse Public License"
