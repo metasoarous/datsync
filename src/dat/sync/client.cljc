@@ -1,7 +1,16 @@
-(ns datsync.client
+(ns dat.sync.client
   "# Datsync client API"
-  (:require [datascript.core :as d]
-            [datsync.impl.utils :as utils]))
+  #?(:cljs (:require-macros [cljs.core.async.macros :as async-macros :refer [go go-loop]]))
+  (:require #?@(:clj [[clojure.core.async :as async :refer [go go-loop]]]
+                :cljs [[cljs.core.async :as async]])
+            [dat.spec.protocols :as protocols]
+            [dat.remote :as remote]
+            [dat.reactor :as reactor]
+            [dat.reactor.dispatcher :as dispatcher]
+            [dat.sync.utils :as utils]
+            [datascript.core :as d]
+            [com.stuartsierra.component :as component]
+            [taoensso.timbre :as log #?@(:cljs [:include-macros true])]))
 
 
 ;; Datsync let's us transparently mirror and syncronize a client side DataScript database with a server side
@@ -64,24 +73,73 @@
 (def base-schema
   "The base satsync schema"
   ;; So we can use idents more effectively
-  {:datsync.tx/origin {:db/doc "The origin of the transaction. Should be either :datsync.tx.origin/remote or .../local"} 
-   :datsync.remote.db/id {:db/unique :db.unique/identity
-                          :db/cardinality :db.cardinality/one
-                          :db/doc "The eid of the entity on the remote."}
-   :datsync/diff {:db/valueType :db.type/ref
-                  :db/cardinality :db.cardinality/one
-                  :db/doc "An entity that represents all of the persisted changes to an entity that have not been confirmed yet."}
+  {:dat.sync.tx/origin {:db/doc "The origin of the transaction. Should be either :dat.sync.tx.origin/remote or .../local"}
+   :dat.sync.remote.db/id {:db/unique :db.unique/identity
+                           :db/cardinality :db.cardinality/one
+                           :db/doc "The eid of the entity on the remote."}
+   :dat.sync/diff {:db/valueType :db.type/ref
+                   :db/cardinality :db.cardinality/one}
+                   :db/doc "An entity that represents all of the persisted changes to an entity that have not been confirmed yet."
    ;; Navigration on the client; I guess the server may need to know this as well for it's scope... Maybe
    ;; redundant...
-   :datsync/route {}})
+   :dat.sync/route {}})
 
+;; Going to rewrite this function; Wanted to make it more of a straight execution of a query for the new
+;; schema based on a (d/q '[:find (pull ...)]) & d/with.
+;; To that end
+
+(def schema-idents [:db/valueType :db/cardinality :db/unique :e/type :attribute.])
+
+(def ident-pulls
+  (into {} (map (fn [ident] [ident '[*]]) schema-idents)))
+
+(def schema-query [:find [(list 'pull '?e ['* ident-pulls]) '...]
+                   :where '[?e :db/ident]])
+
+(defn replace-ident
+  [entity attr]
+  (update entity attr :db/ident))
+
+(defn schema
+  [db]
+  ;; Why doesn't this query work? XXX Very strange; Pickup.
+  (let [schema (d/q schema-query db)]
+    (into
+      {}
+      (map
+        (fn [schema-entity]
+          [(:db/ident schema-entity)
+           ;; Fix up schema entry; First clean idents
+           (-> (reduce replace-ident schema-entity schema-idents)
+               ;; Then save the real valueType so we have it cached
+               (assoc :dat.sync.remote.db/valueType (:db/valueType schema-entity))
+               (update :db/valueType (fn [value-type-ident] (when (= value-type-ident :db.type/ref) value-type-ident))))]) 
+        schema))))
 
 (defn tx-schema-changes
-  "Extracts the schema (presently defined as anything with an :db/ident attribute) from the translation tx."
+  "Extracts the schema (presently defined as anything with an :db/ident attribute) from the translation tx, or if a db is specified,
+  it's schema is used. It's assumed here the "
   {:todo "Maybe this and other functions need to use the translation here, so they can be used as a more composable API."}
-  [tx]
-  (let [schema-eids (set (map second (filter (comp (partial = :db/ident) #(nth % 2)) tx)))]
-    (filter (comp schema-eids second) tx)))
+  ([db tx]
+   (let [schema (:schema db)
+         new-ident-changes (tx-schema-changes tx)
+         old-ident-eids (set (d/q '[:find [?e ...] :where [?e :db/ident]]))
+         changes-to-old-eids (filter
+                               (fn [[op e a v :as datom]]
+                                 (try
+                                   (old-ident-eids e)
+                                   (catch #?(:clj Exception :cljs :default) e
+                                     (log/error e "Failed to grok datom in tx-schema-changes"))))
+                               tx)
+         tx
+         (->> changes-to-old-eids
+              (concat new-ident-changes)
+              distinct
+              vec)]
+     tx))
+  ([tx]
+   (let [schema-eids (set (map second (filter (comp (partial = :db/ident) #(nth % 2)) tx)))]
+     (filter (comp schema-eids second) tx))))
 
 
 (defn ref-ident-or-value
@@ -104,30 +162,36 @@
 ;;   * if a ref, get the ref entity
 ;;   * if an ident, get that ident and replace as the origin value
 
+
 (defn schema-with-changes
   "Takes the schema related tx-forms from an import tx (as given to us via the output of tx-schema-changes) and returns
   the merge of this schema data into the db's existing schema definition."
   {:todo "Implement ability to process/consider schema changes after database has already been set up"}
   [db tx]
+  (log/info "Calling schema-with-changes")
   (let [tx (normalize-tx tx) ;; all non public functions should assume this already...
-        db' (d/db-with db tx)]
-    (->> tx
-         (group-by second)
-         (reduce
-           (fn [schema-map [ident-eid ident-eid-tx]]
-             (let [ident-keyword (some (fn [[op eid attr v]] (when (= attr :db/ident) v)) ident-eid-tx)]
-               (reduce
-                 ;; Should be taking into account op here; this assumes always add XXX
-                 (fn [schema-map' [op eid attr v]]
-                   (let [value (ref-ident-or-value db' attr v)]
-                     ;; We can't assoc in any non ref valueType since DataScript will error (doesn't support)
-                     (if-not (and (= attr :db/valueType) (not= value :db.type/ref))
-                       (assoc-in schema-map' [ident-keyword attr] value)
-                       schema-map')))
-                 schema-map
-                 ident-eid-tx)))
-           (:schema db)))))
-
+        db' (d/db-with db tx)
+        _ (log/info "With db")
+        new-schema (schema db')]
+    (log/info "Done with schema-with-changes")
+    (merge (:schema db) new-schema)))
+    ;; Replaced all of this; Total nightmare
+    ;(->> tx
+         ;(group-by second)
+         ;(reduce
+           ;(fn [schema-map [ident-eid ident-eid-tx]]
+             ;(let [ident-keyword (some (fn [[op eid attr v]] (when (= attr :db/ident) v)) ident-eid-tx)]
+               ;(reduce
+                 ;;; Should be taking into account op here; this assumes always add XXX
+                 ;(fn [schema-map' [op eid attr v]]
+                   ;(let [value (ref-ident-or-value db' attr v)]
+                     ;;; We can't assoc in any non ref valueType since DataScript will error (doesn't support)
+                     ;(if-not (and (= attr :db/valueType) (not= value :db.type/ref))
+                       ;(assoc-in schema-map' [ident-keyword attr] value)
+                       ;schema-map')))
+                 ;schema-map
+                 ;ident-eid-tx)))
+           ;(:schema db)))))
 
 
 
@@ -151,6 +215,7 @@
   ;; efficient. But right now just want to get this working...
   (d/init-db (d/datoms db :eavt) schema))
 
+;; deprecating...
 (defn -transact-with-middleware!
   [conn middleware-fn tx-data tx-meta]
   {:pre [(d/conn? conn)]}
@@ -175,6 +240,7 @@
 
 ;; This is really just a more general uber-transact thing; or some more general/powerful transaction behaviour
 ;; specification mechanism. We're also adding schema changes to 
+;; Should deprecate or clean up
 (defn ^:export transact-with-middleware!
   "We need to override the d/transact! function so we can insert transaction middleware that automatically adds
   our tx metadata for us. We shouldn't have to think about this; it should be transparent, and we should be keeping
@@ -187,7 +253,6 @@
      (doseq [[_ callback] @(:listeners (meta conn))]
        (callback report))
      report)))
-
 
 
 ;; ## Transaction metadata
@@ -203,9 +268,14 @@
   (let [tx-id (:db/current-tx tempids)]
     ;; First we add the transaction datoms
     (concat (map (fn [[k v]] [:db/add tx-id k v]) tx-meta)
-            [[:db/add tx-id :datsync/sync? false]])))
+            [[:db/add tx-id :dat.sync/sync? false]])))
 
 ;; XXX Mark the incoming bootstrap transaction as :in-sync
+
+;; One way to speed things up would be to not try and keep ids the same
+;; Would make a lot easier.
+;; In short though, we're doing a ton of querying here.
+;; Should see if there's a nice elegant way we can do all this stuff at once with just a query (or two)
 
 (defn get-or-assign-local-eid
   [db current-mapping eid]
@@ -213,7 +283,7 @@
   (if-let [local-eid (current-mapping eid)]
     local-eid
     ;; If we don't, find out if we already have a mapping in the db
-    (if-let [local-eid (d/q '[:find ?e . :where [?e :datsync.remote.db/id ?id] :in $ ?id] db eid)]
+    (if-let [local-eid (d/q '[:find ?e . :where [?e :dat.sync.remote.db/id ?id] :in $ ?id] db eid)]
       ;; Then map that eid in the transaction with the local eid
       local-eid
       ;; If not, then make a new id, attempting to preserve ids wherever possible
@@ -249,7 +319,7 @@
                :in $ [?attr-ident ...] ?ref-type-remote-eid
                :where [?attr :db/ident ?attr-ident]
                       [?attr :db/valueType ?ref-type]
-                      [?ref-type :datsync.remote.db/id ?ref-type-remote-eid]]
+                      [?ref-type :dat.sync.remote.db/id ?ref-type-remote-eid]]
              db
              tx-attr-idents
              db-ref-type-remote-eid)
@@ -296,11 +366,12 @@
                    (assoc m' v (get-or-assign-local-eid db m' v)))
                  m))))
 
+
 ;; Translate eids in the system
 (defn translate-eids
   "Takes a tx in canonical form and changes any incoming eids (including reference ids (WIP XXX)) to equivalents consistent with the local db. It does this
-  by looking for a match to an existing :datsync.remote.db/id. If it doesn't find one, it matches it with a negative one
-  and adds an [:db/add eid :datsync.remote.db/id _] statement to the tx."
+  by looking for a match to an existing :dat.sync.remote.db/id. If it doesn't find one, it matches it with a negative one
+  and adds an [:db/add eid :dat.sync.remote.db/id _] statement to the tx."
   [db tx]
   (let [eid-mapping (make-eid-mapping db tx)
         ref-attribute-idents (get-ref-attrs-for-mapping db tx)
@@ -311,21 +382,22 @@
              (fn [[op e a v :as tx-form]]
                [op (eid-mapping e) a (if (ref-attribute-idents a) (eid-mapping v) v)])
              tx)
-           ;; Then go in and add :datsync.remote.db/id attributes for new eids
-           ;; First get all local eids involved in the transaction, and see which ones don't have the :datsync
+           ;; Then go in and add :dat.sync.remote.db/id attributes for new eids
+           ;; First get all local eids involved in the transaction, and see which ones don't have the
+           ;; :dat.sync
            ;; attr
            (let [local-tx-eids (vals eid-mapping)
-                 local-tx-eids-w-remote (set (d/q '[:find [?e ...] :in $ [?e ...] :where [?e :datsync.remote.db/id _]] db local-tx-eids))
+                 local-tx-eids-w-remote (set (d/q '[:find [?e ...] :in $ [?e ...] :where [?e :dat.sync.remote.db/id _]] db local-tx-eids))
                  local-tx-eids-wo-remote (filter (comp not local-tx-eids-w-remote) local-tx-eids)
                  reverse-mapping (into {} (map (fn [[k v]] [v k]) eid-mapping))]
              (mapv
                (fn [eid]
-                 [:db/add eid :datsync.remote.db/id (reverse-mapping eid)])
+                 [:db/add eid :dat.sync.remote.db/id (reverse-mapping eid)])
                local-tx-eids-wo-remote))))))
 
 
-;; Oh; we track what needs to get sent as novelty by what does not have a :datsync.remote.db/id yet, and what
-;; is not flagged as :datsync/sync? false.
+;; Oh; we track what needs to get sent as novelty by what does not have a :dat.sync.remote.db/id yet, and what
+;; is not flagged as :dat.sync/sync? false.
 
 (defn wrap-remote-tx
   "Here we add data we need to track the origin of the data (that we don't need to )"
@@ -333,7 +405,7 @@
    (let [tx (->> tx
                  normalize-tx
                  (translate-eids db))]
-         ;remote-tx-meta {:datasync.tx/origin :datsync.tx.origin/remote}
+         ;remote-tx-meta {:datasync.tx/origin :dat.sync.tx.origin/remote}
          ;tx-report (d/with db tx (merge remote-tx-meta other-tx-meta))
      tx)))
      ;(concat tx
@@ -395,16 +467,15 @@
 ;; Needs to be reworked overall as well
 
 (defn datomic-tx
-  [conn tx]
+  [db tx]
   (let [tx (normalize-tx tx)
         ids (map second tx)
-        db @conn
         translated-tx (d/q '[:find ?op ?dat-e ?a ?dat-v
                              :in % $ [[?op ?e ?a ?v]]
-                             :where [(get-else $ ?e :datsync.remote.db/id ?e) ?dat-e]
+                             :where [(get-else $ ?e :dat.sync.remote.db/id ?e) ?dat-e]
                                     (datomic-value-trans ?v ?a ?dat-v)]
                            ;; Really want to be able to do an or clause here to get either the value back
-                           ;; unchanged, or the reference :datsync.remote.db/id if a ref attribute
+                           ;; unchanged, or the reference :dat.sync.remote.db/id if a ref attribute
                            ;; Instead I'll use rules...
                            '[[(attr-type-ident ?attr-ident ?type-ident)
                               [?attr :db/ident ?attr-ident]
@@ -415,7 +486,7 @@
                              [(datomic-value-trans ?ds-v ?attr-ident ?datomic-v)
                               (is-ref ?attr-ident)
                               (> ?ds-v 0)
-                              [?ds-v :datsync.remote.db/id ?datomic-v]]
+                              [?ds-v :dat.sync.remote.db/id ?datomic-v]]
                              [(datomic-value-trans ?ds-v ?attr-ident ?datomic-v)
                               (is-ref ?attr-ident)
                               (< ?ds-v 0)
@@ -461,7 +532,73 @@
 ;; ## Putting it all together?
 ;; ---------------------------
 
-;; Should be careful about :db/retract above (assumes all :db/add)
 
+;; We put this all together with a few handler registrations so dat.reactor will do the right
+;; thing, if being used in your system.
+
+;; Sidenote: Should be careful about :db/retract above (assumes all :db/add) 
+
+(reactor/register-handler
+  ::apply-schema-changes
+  (fn [app db [_ schema-changes]]
+    ;; Have to make sure schema with changes and replace schema don't need the :ident
+    ;; Would be nice to log idents
+    (log/info "Applying schema changes!")
+    (let [new-schema (schema-with-changes db schema-changes)
+          new-db (replace-schema db new-schema)]
+      new-db)))
+
+;; May need to separate the schema and the "other" data, but for now, we'll leave it at this
+(reactor/register-handler
+  ::recv-remote-tx
+  (fn [app db [_ tx-data]]
+    (log/info "Running remote-tx in :dat.sync/recv-remote-tx.")
+    (let [normalized-tx (normalize-tx tx-data)
+          _ (log/info "Normalized tx")
+          schema-changes (seq (tx-schema-changes db normalized-tx))
+          _ (log/info "Schema changes")]
+      (reactor/resolve-to app db
+        [(when schema-changes [::apply-schema-changes schema-changes])
+         [:dat.reactor/local-tx normalized-tx]]))))
+
+;; Triggers
+(reactor/register-handler
+  ::send-remote-tx
+  (fn [app db [_ tx]]
+    (let [translated-tx (datomic-tx db tx)]
+      ;; log directly in handler function to make sure a failure doesn't preclude log execution
+      (log/info "Sending tx:" (pr-str (take 100 translated-tx)) "...")
+      (reactor/resolve-to app db
+        [[:dat.remote/send-event! [:dat.sync.remote/tx translated-tx]]]))))
+
+
+(reactor/register-handler
+  :dat.sync.client/bootstrap
+  (fn [app db [_ tx-data]]
+    ;; Possibly flag some state somewhere saying bootstrap has taken place?
+    (log/info "Revieved bootstrap!" (take 10 tx-data))
+    (reactor/resolve-to app db
+      [[::recv-remote-tx tx-data]])))
+
+
+;; This is just a little glue; A system component that plugs in to pipe messages from the remote to the
+;; dispatch chan
+
+(defrecord Datsync [dispatcher remote]
+  component/Lifecycle
+  (start [component]
+    (let [remote-chan (remote/event-chan remote)]
+      (log/info "Starting Datsync component")
+      (go-loop []
+        (let [event (async/<! remote-chan)]
+          (dispatcher/dispatch! dispatcher event)
+          (recur)))
+      component))
+  (stop [component]
+    component))
+
+
+(defn new-datsync []
+  (map->Datsync {}))
 
 

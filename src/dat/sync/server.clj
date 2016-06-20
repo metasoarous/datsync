@@ -1,4 +1,4 @@
-(ns datsync.server
+(ns dat.sync.server
   (:require [datomic.api :as d]))
 
 
@@ -29,7 +29,7 @@
 ;; alternate approach to consistency?)
 (def remote-tx-schema
   [{:db/id -1
-    :db/ident :datsync/remote-tx
+    :db/ident :dat.sync/remote-tx
     :db/fn #db/fn {:lang "clojure"
                    :params [db tx]
                    :code '()}}])
@@ -37,7 +37,7 @@
 
 ;; Custom tx functions can be added by completing associated multimethod definitions.
 
-;;     (defmethod datsync/translate-tx-form :your.app.tx/function-name
+;;     (defmethod dat.sync/translate-tx-form :your.app.tx/function-name
 ;;       [tempid-map [op arg1 arg2]
 ;;       [op (tempid-map arg1) arg2])
 
@@ -81,9 +81,9 @@
 ;; normally handle a form submission.
 ;; In sente, you might do something like:
 ;; 
-;;    (defmethod event-msg-handler :datsync.client/tx
+;;    (defmethod event-msg-handler :dat.sync.client/tx
 ;;      [{:as app :keys [datomic ws-connection]} {:as ev-msg :keys [id ?data]}]
-;;      (let [tx-report @(datsync/apply-remote-tx! datomic ?data)]
+;;      (let [tx-report @(dat.sync/apply-remote-tx! datomic ?data)]
 ;;        (println "Do something with:" tx-report)))
 
 
@@ -131,7 +131,7 @@
 ;;       [tx-deltas]
 ;;       ;; This handler is where you would eventually set up subscriptions
 ;;       (try
-;;         (ws/broadcast! ws-connection [:datsync/tx-data tx-deltas])
+;;         (ws/broadcast! ws-connection [:dat.sync/tx-data tx-deltas])
 ;;         (catch Exception e
 ;;           (log/error "Failed to send transaction report to clients!")
 ;;           (.printStackTrace e))))
