@@ -11,24 +11,20 @@
                  ;; Dat projects
                  [datspec "0.0.1-alpha1-SNAPSHOT"]
                  [datreactor "0.0.1-alpha1-SNAPSHOT"]
-                 ;; Do we need this?
                  [com.stuartsierra/component "0.3.0"]
+                 ;; Other stuff
                  [environ "1.0.1"]
                  [reagent "0.5.1"]
                  [re-frame "0.5.0"]
                  [datascript "0.13.3"]
                  ;; Server db (datomic)
                  [com.datomic/datomic-free "0.9.5327" :exclusions [joda-time]]
-                 ;; Not sure if we need; probably not... XXX
-                 [bidi "1.21.1"]
                  [io.rkn/conformity "0.4.0"]
                  [com.rpl/specter "0.9.1"]
                  [prismatic/plumbing "0.5.2"]
                  [com.taoensso/timbre "4.4.0"]
                  [com.taoensso/encore "2.56.0"]
                  [com.taoensso/sente "1.8.1" :exclusions [org.clojure/tools.reader]]]
-                 ;; XXX For when we jump aboard.
-                 ;[org.clojure/core.typed "0.3.18"]
   ;;
   ;; ## Snipped from DataScript's
   ;; ============================
