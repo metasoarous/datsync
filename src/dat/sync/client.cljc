@@ -3,7 +3,6 @@
   #?(:cljs (:require-macros [cljs.core.async.macros :as async-macros :refer [go go-loop]]))
   (:require #?@(:clj [[clojure.core.async :as async :refer [go go-loop]]]
                 :cljs [[cljs.core.async :as async]])
-            [dat.spec.protocols :as protocols]
             [dat.remote :as remote]
             [dat.reactor :as reactor]
             [dat.reactor.dispatcher :as dispatcher]
@@ -540,11 +539,21 @@
 
 (reactor/register-handler
   ::apply-schema-changes
-  (fn [app db [_ schema-changes]]
+  (fn [_ db [_ schema-tx]]
     ;; Have to make sure schema with changes and replace schema don't need the :ident
     ;; Would be nice to log idents
     (log/info "Applying schema changes!")
-    (let [new-schema (schema-with-changes db schema-changes)
+    (let [new-schema (schema-with-changes db schema-tx)
+          new-db (replace-schema db new-schema)]
+      new-db)))
+
+(reactor/register-handler
+  ::merge-schema
+  (fn [_ db [_ schema]]
+    ;; Have to make sure schema with changes and replace schema don't need the :ident
+    ;; Would be nice to log idents
+    (log/info "Applying schema changes!")
+    (let [new-schema (utils/deep-merge (:schema db) schema)
           new-db (replace-schema db new-schema)]
       new-db)))
 
@@ -589,7 +598,8 @@
   (start [component]
     (let [remote-chan (remote/event-chan remote)]
       (log/info "Starting Datsync component")
-      (dispatcher/dispatch! dispatcher [::apply-schema-changes base-schema])
+      (dispatcher/dispatch! dispatcher [::merge-schema base-schema])
+      (log/info "Dispatched schema changes")
       (go-loop []
         (let [event (async/<! remote-chan)]
           (dispatcher/dispatch! dispatcher event)
