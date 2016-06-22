@@ -79,7 +79,7 @@
                            :db/doc "The eid of the entity on the remote."}
    :dat.sync/diff {:db/valueType :db.type/ref
                    :db/cardinality :db.cardinality/one}
-                   :db/doc "An entity that represents all of the persisted changes to an entity that have not been confirmed yet."
+                  :db/doc "An entity that represents all of the persisted changes to an entity that have not been confirmed yet."
    ;; Navigration on the client; I guess the server may need to know this as well for it's scope... Maybe
    ;; redundant...
    :dat.sync/route {}})

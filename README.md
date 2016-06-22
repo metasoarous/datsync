@@ -9,66 +9,86 @@ Datomic &lt;-> DataScript syncing/replication utilities
 
 ## Introduction
 
-This library offers tools for building DataScript databases as materialized views (very much in the re-frame/samsa sense) of some master Datomic database.
+This library offers tools for building DataScript databases as materialized views (very much in the re-frame/samsa sense) of some master/central Datomic database.
+Eventually we hope to also handle optimistic updates, offline availability, scoped syncing, and security filters as well.
 
-It is hoped that we'll also eventually be able to provide tools for doing bidirectional syncing, giving us optimistic updates and offline functionality on clients.
-For now, I hope this restricted scope will be something we can build upon.
+This library is also part of the [Datsys architecture](https://github.com/metasoarous/datspec).
+As such, it offers a set of ready-made system components (a la Stuart Sierra) for plugging into a componentized system (client only right now; server coming soon).
+For a look at how Datsync hooks up in this fashion see the Datsys README.
 
-From here:
+For more general information about Datsys and Datsync:
 
 * Clojure/West 2016 talk: [Datalog all the way down](https://www.youtube.com/watch?v=aI0zVzzoK_E)
-* For an example datsync application and a look at the patterns datsync facilitates, see [Catalysis](https://github.com/metasoarous/catalysis) and its [chatroom](https://gitter.im/metasoarous/catalysis)
+* If you'd like to chat, see the [Datsys chatroom](https://gitter.im/metasoarous/datsys) and [Datsync chatroom](https://gitter.im/metasoarous/datsync)
 * For more in depth documentation (including the [big picture system vision](http://github.com/metasoarous/datsync/wiki/The-Vision) and this library's [current limitations and future directions](http://github.com/metasoarous/datsync/wiki/Current-limitations-and-future-directions)), see the [datsync GitHub wiki](https://github.com/metasoarous/datsync/wiki).
-* If you'd like to chat, join us in the [datsync chatroom](https://gitter.im/metasoarous/datsync).
-* If you're more interested in a quickstart and API tour, read on.
-* The source is also heavily documented (though there's need of some cleanup there).
+* For an API walkthrough, read on.
+* The source is also heavily documented (though there's need for some cleanup).
 
 
 ## Quickstart
 
+The easiest way to get Datsync running is to clone [Datsys](https://github.com/metasoarous/datsys).
+It's a pretty minimal template, so it shouldn't be difficult to adapt it to your needs.
+
+But for the sake of thoroughness, we'll cover here how you'd set things up.
 First, add the following to your `project.clj`:
 
 ```
-[datsync "0.0.1-SNAPSHOT"]
+[datsync "0.0.1-alpha1-SNAPSHOT"]
 ```
 
-### On the client
 
-First, the namespace:
+### On the client (with system component)
 
-```clojure
-(require '[datsync.client :as datsync]
-         '[datascript.core :as d])
+Datsync comes with the following system components:
+
+* `dat.remote.impl.sente/SenteRemote`: This component implements the `dat.spec.protocols/PRemoteSendEvent` and `dat.spec.protocols/PRemoteEventChan` protocols, making 
+
+This component assumes a `datreactor` component for dispatching/handling messages to/from the server and a `datremote` for sending and recieving these messages.
+You are welcome to ignore this functionality and directly hook up the translation functions yourself.
+But we'll start with this setup, to see how automated things are.
+
+```clj
+(ns your-app
+  (:require [dat.sync.client :as dat.sync]
+            [dat.remote]
+            [dat.remote.impl.sente :as sente]
+            [datascript.core :as d]
+            [dat.reactor.dispatcher :as dispatcher]))
+
+
+(defn new-system []
+  (-> (component/system-map
+        ;; The default remote comms component
+        :remote     (sente/new-sente-remote)
+        ;; The dispatcher accepts messages from wherever (pluggable event streams?) and presents them to the reactor
+        :dispatcher (dispatcher/new-strictly-ordered-dispatcher)
+        ;; This is the system component around which you program your application. It needs to have a conn,
+        ;; and should also have get the remote and the dispatcher
+        :app        (component/using
+                      (dat.view/new-datview)
+                      [:remote :dispatcher])
+        ;; Again, the reactor is what orchestrates the event processing and handles side effects
+        :reactor    (component/using
+                      (reactor/new-simple-reactor)
+                      [:remote :dispatcher :app])
+        ;; The Datsync component pipes data from the remote in to the reactor for processing, and registers
+        ;; default handlers on the reactor for this data
+        :datsync    (component/using
+                      (dat.sync/new-datsync)
+                      [:remote :dispatcher]))))
 ```
 
-Next we'll create our database connection, and load it with some datsync specific schema:
+Because all of these pieces are designed and build around protocols and specs, the semantics of how you'd
+swap-out/customize system components are relatively straight forward.
 
-```clojure
-(def conn (d/create-conn datsync/base-schema))
-```
 
-While there are no restrictions presently as to what methods you may use for sending messages between client
-and server, we'll show you roughly how you'd set things up using [Sente](https://github.com/ptaoussanis/sente).
+#### What's going on here?
 
-#### Getting data into the client db
+Behind the scenes, Datsync hooks things up so that messages coming from the server with event id `:dat.sync.client/recv-remote-tx` get transacted into our local database subject to the following conditions:
 
-You'll need the client to receive data from the server as transactions.
-
-Assuming we have a `push-msg-handler` multimethod set up which dispatches on the message id, we can intercept
-messages with an id of (e.g.) `:datsync/tx-data`, and handle them as follows:
-
-```clojure
-(defmethod push-msg-handler :datsync/tx-data
-  [[_ tx-data]]
-  (datsync/apply-remote-tx! conn tx-data))
-```
-
-The `datsync/apply-remote-tx!` function takes your DataScript `conn` and a collection of transaction forms
-(should be compatible with any Datomic transaction form), and applies that to the `conn`.
-
-It's worth noting a few things about this function:
-
-* It expands nested maps, so inner maps aren't just treated as single values in the DataScript db
+* Nested maps are expanded, so inner maps aren't just treated as single values in the DataScript db (thinking of
+  revising this; should maybe just require that nested maps satisfy `:db/isComponent true`).
 * Every entity gets a `:datsync.remote.db/id` mapping to the Datomic id
 * Local ids try to match remote ids when possible
 * Any entity specified in the transaction which has a `:db/ident` attribute will be treated as part of the
@@ -82,7 +102,44 @@ It's worth noting a few things about this function:
           some hoops to reference attribute metadata via the schema attribute entity
         * This can facilitate really powerful UI patterns based on schema metadata which direct the composition
           of UI components (in an overrideable fashion); have some WIP on this I might put in another lib eventually
-    * We can also apply schema changes to an existing database using the `datsync/update-schema!` function
+    * We can also apply schema changes to an existing database using the `datsync/update-schema!` function, or by
+      dispatching a `:dat.sync.client/apply-schema-changes` event.
+
+Additionally, there is a `:dat.sync.client/send-remote-tx` event handler that takes transactions from the client and submits them to the server.
+This function:
+
+* Translates eids
+
+### On the client (without system component)
+
+If you're not into component, you can also set things manually using the helper functions defined in Datsync.
+
+First create your database connection, and load it with some datsync specific schema:
+
+```clj
+(def conn (d/create-conn datsync/base-schema))
+```
+
+While there are no restrictions presently as to what methods you may use for sending messages between client
+and server, we'll show you roughly how you'd set things up using [Sente](https://github.com/ptaoussanis/sente).
+
+#### Getting data into the client db
+
+You'll need the client to receive data from the server as transactions.
+
+Assuming we have a `push-msg-handler` multimethod set up which dispatches on the message id, we can intercept
+messages with an id of (e.g.) `:datsync/tx-data`, and handle them as follows:
+
+```clj
+(defmethod push-msg-handler :datsync/tx-data
+  [[_ tx-data]]
+  (datsync/apply-remote-tx! conn tx-data))
+```
+
+The `datsync/apply-remote-tx!` function takes your DataScript `conn` and a collection of transaction forms
+(should be compatible with any Datomic transaction form), and applies that to the `conn`.
+
+It's worth noting a few things about this function:
 
 #### Sending transactions to the server
 
@@ -90,7 +147,7 @@ When we send transactions to the server, we need to translate their entity ids t
 The `datsync/datomic-tx` utility function does this for us.
 In sente you could write a little function that wraps this as follows.
 
-```clojure
+```clj
 (defn send-tx! [tx]
   (ws/chsk-send! [:datsync.client/tx (datsync/datomic-tx conn tx)]))
 ```
@@ -98,22 +155,26 @@ In sente you could write a little function that wraps this as follows.
 ### On the server
 
 Here things look pretty similar; we need to send and receive transactions.
-However, in general, things are much simpler here, since a lot of the translational work between DataScript and Datomic is set up to happen on the client side.
+However, as far as implementation goes, things are much simpler, since a lot of the translational work between DataScript and Datomic is set up to happen on the client side.
+
+Eventually we'll add server-side system component protocols, specs and default implementations, so that this is all much more modular (as on the client).
+But for now we'll focus on how you'd set things up with Sente.
+(Though, we'd recommend just cloning [Datsys](https://github.com/metasoarous/datsys) and tweaking from there, even if you don't want the rest of Datsys)
 
 To start, let's require the `datsync.server.core` namespace.
 
-```clojure
+```clj
 (require '[datsync.server :as datsync])
 ```
 
 #### Receiving transactions
 
 For this we'll have to set up a listener for the `:datsync.client/tx` messages that we sent from the client.
-If you're using regular http requests, you can just call this in your handler functions as you might normally handle a form submission and send a respond indicating whether the transaction went through.
+If you're using regular http requests, you can just call this in your handler functions as you might normally handle a form submission and send a response indicating whether the transaction went through.
 In sente, you might do something like:
 
 
-```clojure
+```clj
 (defmethod event-msg-handler :datsync.client/tx
   [{:as app :keys [datomic ws-connection]} {:as ev-msg :keys [id ?data]}]
   (let [tx-report @(datsync/apply-remote-tx! datomic ?data)]
@@ -127,7 +188,7 @@ Eventually we can get fancy with installing subscription middleware, so for each
 
 Assuming we just send all changes to all clients using sente, you might write a function like this as a handler:
 
-```clojure
+```clj
 (defn handle-transaction-report!
   [tx-deltas]
   ;; This handler is where you would eventually set up subscriptions
@@ -143,7 +204,7 @@ This handler function is also where you could implement your own scope restricti
 
 We apply this handler function using the `datsync/start-transaction-listener!` function:
 
-```clojure
+```clj
 (datsync/start-transaction-listener! (d/tx-report-queue conn) handle-transaction-report!)
 ```
 

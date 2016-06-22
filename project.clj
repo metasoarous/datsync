@@ -4,10 +4,14 @@
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :min-lein-version "2.0.0"
-  :dependencies [[org.clojure/clojure "1.7.0"]
-                 [org.clojure/clojurescript "1.7.145"]
-                 ;; Do we need this?
+  :dependencies [[org.clojure/clojure "1.9.0-alpha6"]
+                 [org.clojure/clojurescript "1.9.36"]
                  [org.clojure/core.async "0.2.371"]
+                 [org.clojure/core.match "0.3.0-alpha4"]
+                 ;; Dat projects
+                 [datspec "0.0.1-alpha1-SNAPSHOT"]
+                 [datreactor "0.0.1-alpha1-SNAPSHOT"]
+                 ;; Do we need this?
                  [com.stuartsierra/component "0.3.0"]
                  [environ "1.0.1"]
                  [reagent "0.5.1"]
@@ -20,7 +24,9 @@
                  [io.rkn/conformity "0.4.0"]
                  [com.rpl/specter "0.9.1"]
                  [prismatic/plumbing "0.5.2"]
-                 [org.clojure/core.match "0.3.0-alpha4"]]
+                 [com.taoensso/timbre "4.4.0"]
+                 [com.taoensso/encore "2.56.0"]
+                 [com.taoensso/sente "1.8.1" :exclusions [org.clojure/tools.reader]]]
                  ;; XXX For when we jump aboard.
                  ;[org.clojure/core.typed "0.3.18"]
   ;;
