@@ -55,7 +55,6 @@
   (remote-event-chan [component]
     out-chan))
 
-()
 
 
 (defn new-sente-remote []
