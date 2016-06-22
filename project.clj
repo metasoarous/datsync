@@ -15,8 +15,7 @@
                  ;; Other stuff
                  [environ "1.0.1"]
                  [reagent "0.5.1"]
-                 [re-frame "0.5.0"]
-                 [datascript "0.13.3"]
+                 [datascript "0.13.4"]
                  ;; Server db (datomic)
                  [com.datomic/datomic-free "0.9.5327" :exclusions [joda-time]]
                  [io.rkn/conformity "0.4.0"]
