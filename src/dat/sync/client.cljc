@@ -78,8 +78,8 @@
                            :db/cardinality :db.cardinality/one
                            :db/doc "The eid of the entity on the remote."}
    :dat.sync/diff {:db/valueType :db.type/ref
-                   :db/cardinality :db.cardinality/one}
-                  :db/doc "An entity that represents all of the persisted changes to an entity that have not been confirmed yet."
+                   :db/cardinality :db.cardinality/one
+                   :db/doc "An entity that represents all of the persisted changes to an entity that have not been confirmed yet."}
    ;; Navigration on the client; I guess the server may need to know this as well for it's scope... Maybe
    ;; redundant...
    :dat.sync/route {}})
@@ -88,7 +88,7 @@
 ;; schema based on a (d/q '[:find (pull ...)]) & d/with.
 ;; To that end
 
-(def schema-idents [:db/valueType :db/cardinality :db/unique :e/type :attribute.])
+(def schema-idents [:db/valueType :db/cardinality :db/unique :e/type :attribute.ref/types])
 
 (def ident-pulls
   (into {} (map (fn [ident] [ident '[*]]) schema-idents)))
@@ -119,7 +119,7 @@
 (defn tx-schema-changes
   "Extracts the schema (presently defined as anything with an :db/ident attribute) from the translation tx, or if a db is specified,
   it's schema is used. It's assumed here the "
-  {:todo "Maybe this and other functions need to use the translation here, so they can be used as a more composable API."}
+  ;; TODO Maybe this and other functions need to use the translation here, so they can be used as a more composable API
   ([db tx]
    (let [schema (:schema db)
          new-ident-changes (tx-schema-changes tx)
@@ -166,7 +166,7 @@
 (defn schema-with-changes
   "Takes the schema related tx-forms from an import tx (as given to us via the output of tx-schema-changes) and returns
   the merge of this schema data into the db's existing schema definition."
-  {:todo "Implement ability to process/consider schema changes after database has already been set up"}
+  ;; TODO Implement ability to process/consider schema changes after database has already been set up
   [db tx]
   (log/info "Calling schema-with-changes")
   (let [tx (normalize-tx tx) ;; all non public functions should assume this already...
@@ -589,6 +589,7 @@
   (start [component]
     (let [remote-chan (remote/event-chan remote)]
       (log/info "Starting Datsync component")
+      (dispatcher/dispatch! dispatcher [::apply-schema-changes base-schema])
       (go-loop []
         (let [event (async/<! remote-chan)]
           (dispatcher/dispatch! dispatcher event)
