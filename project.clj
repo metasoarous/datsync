@@ -23,6 +23,8 @@
                  [prismatic/plumbing "0.5.2"]
                  [com.taoensso/timbre "4.4.0"]
                  [com.taoensso/encore "2.56.0"]
+                 [com.cognitect/transit-clj "0.8.288"]
+                 [com.cognitect/transit-cljs "0.8.239"]
                  [com.taoensso/sente "1.8.1" :exclusions [org.clojure/tools.reader]]]
   ;; ## Snipped from DataScript's
   ;; ============================
