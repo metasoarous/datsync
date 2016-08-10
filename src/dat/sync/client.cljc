@@ -372,6 +372,7 @@
   by looking for a match to an existing :dat.sync.remote.db/id. If it doesn't find one, it matches it with a negative one
   and adds an [:db/add eid :dat.sync.remote.db/id _] statement to the tx."
   [db tx]
+  (log/debug "Calling translate-eids")
   (let [eid-mapping (make-eid-mapping db tx)
         ref-attribute-idents (get-ref-attrs-for-mapping db tx)
         replace-eids (fn [tx' new-eid] (map (fn [[op _ a v]] [op new-eid a v]) tx'))]
@@ -383,12 +384,13 @@
              tx)
            ;; Then go in and add :dat.sync.remote.db/id attributes for new eids
            ;; First get all local eids involved in the transaction, and see which ones don't have the
-           ;; :dat.sync
-           ;; attr
+           ;; :dat.sync.remote.db/id attr
            (let [local-tx-eids (vals eid-mapping)
                  local-tx-eids-w-remote (set (d/q '[:find [?e ...] :in $ [?e ...] :where [?e :dat.sync.remote.db/id _]] db local-tx-eids))
                  local-tx-eids-wo-remote (filter (comp not local-tx-eids-w-remote) local-tx-eids)
                  reverse-mapping (into {} (map (fn [[k v]] [v k]) eid-mapping))]
+             (log/debug "n local eids w remote" (count local-tx-eids-w-remote))
+             (log/debug "n local eids w/o remote" (count local-tx-eids-wo-remote))
              (mapv
                (fn [eid]
                  [:db/add eid :dat.sync.remote.db/id (reverse-mapping eid)])
@@ -404,7 +406,7 @@
    (let [tx (->> tx
                  normalize-tx
                  (translate-eids db))]
-         ;remote-tx-meta {:datasync.tx/origin :dat.sync.tx.origin/remote}
+         ;remote-tx-meta {:datasync.tx/origin :dat.sync.tx.origin/remote}]
          ;tx-report (d/with db tx (merge remote-tx-meta other-tx-meta))
      tx)))
      ;(concat tx
@@ -563,12 +565,11 @@
   (fn [app db [_ tx-data]]
     (log/info "Running remote-tx in :dat.sync/recv-remote-tx.")
     (let [normalized-tx (normalize-tx tx-data)
-          _ (log/info "Normalized tx")
-          schema-changes (seq (tx-schema-changes db normalized-tx))
-          _ (log/info "Schema changes")]
+          translated-tx (translate-eids db normalized-tx)
+          schema-changes (tx-schema-changes db translated-tx)]
       (reactor/resolve-to app db
-        [(when schema-changes [::apply-schema-changes schema-changes])
-         [:dat.reactor/local-tx normalized-tx]]))))
+        [(when (seq schema-changes) [::apply-schema-changes schema-changes])
+         [:dat.reactor/local-tx translated-tx]]))))
 
 ;; Triggers
 (reactor/register-handler

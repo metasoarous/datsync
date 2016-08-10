@@ -24,7 +24,6 @@
                  [com.taoensso/timbre "4.4.0"]
                  [com.taoensso/encore "2.56.0"]
                  [com.taoensso/sente "1.8.1" :exclusions [org.clojure/tools.reader]]]
-  ;;
   ;; ## Snipped from DataScript's
   ;; ============================
   ;;
@@ -47,13 +46,13 @@
                              [lein-typed "0.3.5"]]
                    :cljsbuild {:builds [{:id "advanced"
                                          :source-paths ["src" "bench/src" "test"]
-                                         :compiler {
-                                                     :output-to     "target/datsync.js"
-                                                     :optimizations :advanced
-                                                     :source-map    "target/datsync.js.map"
-                                                     :pretty-print  true
-                                                     :recompile-dependents false
-                                                     :parallel-build true}}
+                                         :compiler {}
+                                         :output-to     "target/datsync.js"
+                                         :optimizations :advanced
+                                         :source-map    "target/datsync.js.map"
+                                         :pretty-print  true
+                                         :recompile-dependents false
+                                         :parallel-build true}
                                         {id "none"
                                          :source-paths ["src" "bench/src" "test" "dev"]
                                          :compiler {:main          datsync.test
@@ -67,9 +66,7 @@
                  ["target"
                   "release-js/datsync.bare.js"
                   "release-js/datsync.js"]
-  ;; ## Back to from extraction...
-  ;; =============================
-  ;; Once we're ready 
+  ;; Once we're ready
   ;:core.typed {:check []
                ;:check-cljs []}
   ;; Not sure if we need these either
