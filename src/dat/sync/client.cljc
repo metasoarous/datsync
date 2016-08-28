@@ -587,8 +587,12 @@
   (fn [app db [_ tx-data]]
     ;; Possibly flag some state somewhere saying bootstrap has taken place?
     (log/info "Revieved bootstrap!" (take 10 tx-data))
-    (reactor/resolve-to app db
-      [[::recv-remote-tx tx-data]])))
+    (reactor/with-effect
+      ;; This message will fire once the reaction has complete (that is, once the data is bootstrapped; It' lets you decide how your application
+      [:dat.reactor/dispatch! [:dat.sync.client.bootstrap/complete? true]]
+      (reactor/resolve-to app db
+        [[::recv-remote-tx tx-data]]))))
+
 
 
 ;; This is just a little glue; A system component that plugs in to pipe messages from the remote to the
