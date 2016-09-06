@@ -586,7 +586,7 @@
   :dat.sync.client/bootstrap
   (fn [app db [_ tx-data]]
     ;; Possibly flag some state somewhere saying bootstrap has taken place?
-    (log/info "Revieved bootstrap!" (take 10 tx-data))
+    (log/info "Recieved bootstrap!" (take 10 tx-data))
     (reactor/with-effect
       ;; This message will fire once the reaction has complete (that is, once the data is bootstrapped; It' lets you decide how your application
       [:dat.reactor/dispatch! [:dat.sync.client.bootstrap/complete? true]]
