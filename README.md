@@ -102,7 +102,7 @@ Behind the scenes, Datsync hooks things up so that messages coming from the serv
           some hoops to reference attribute metadata via the schema attribute entity
         * This can facilitate really powerful UI patterns based on schema metadata which direct the composition
           of UI components (in an overrideable fashion); have some WIP on this I might put in another lib eventually
-    * We can also apply schema changes to an existing database using the `datsync/update-schema!` function, or by
+    * We can also apply schema changes to an existing database using the `dat.sync.client/update-schema!` function, or by
       dispatching a `:dat.sync.client/apply-schema-changes` event.
 
 Additionally, there is a `:dat.sync.client/send-remote-tx` event handler that takes transactions from the client and submits them to the server.
@@ -117,7 +117,7 @@ If you're not into component, you can also set things manually using the helper 
 First create your database connection, and load it with some datsync specific schema:
 
 ```clj
-(def conn (d/create-conn datsync/base-schema))
+(def conn (d/create-conn dat.sync/base-schema))
 ```
 
 While there are no restrictions presently as to what methods you may use for sending messages between client
@@ -128,23 +128,23 @@ and server, we'll show you roughly how you'd set things up using [Sente](https:/
 You'll need the client to receive data from the server as transactions.
 
 Assuming we have a `push-msg-handler` multimethod set up which dispatches on the message id, we can intercept
-messages with an id of (e.g.) `:datsync/tx-data`, and handle them as follows:
+messages with an id of (e.g.) `:dat.sync/tx-data`, and handle them as follows:
 
 ```clj
-(defmethod push-msg-handler :datsync/tx-data
+(defmethod push-msg-handler :dat.sync/tx-data
   [[_ tx-data]]
-  (datsync/apply-remote-tx! conn tx-data))
+  (dat.sync/apply-remote-tx! conn tx-data))
 ```
 
-The `datsync/apply-remote-tx!` function takes your DataScript `conn` and a collection of transaction forms
+The `dat.sync/apply-remote-tx!` function takes your DataScript `conn` and a collection of transaction forms
 (should be compatible with any Datomic transaction form), and applies that to the `conn`.
 
 It's worth noting a few things about this function:
 
 #### Sending transactions to the server
 
-When we send transactions to the server, we need to translate their entity ids to the corresponding `:datsync.remote.db/id` values.
-The `datsync/datomic-tx` utility function does this for us.
+When we send transactions to the server, we need to translate their entity ids to the corresponding `:dat.sync.remote.db/id` values.
+The `dat.sync/datomic-tx` utility function does this for us.
 In sente you could write a little function that wraps this as follows.
 
 ```clj
@@ -161,23 +161,23 @@ Eventually we'll add server-side system component protocols, specs and default i
 But for now we'll focus on how you'd set things up with Sente.
 (Though, we'd recommend just cloning [Datsys](https://github.com/metasoarous/datsys) and tweaking from there, even if you don't want the rest of Datsys)
 
-To start, let's require the `datsync.server.core` namespace.
+To start, let's require the `dat.sync.server` namespace.
 
 ```clj
-(require '[datsync.server :as datsync])
+(require '[dat.sync.server :as dat.sync])
 ```
 
 #### Receiving transactions
 
-For this we'll have to set up a listener for the `:datsync.client/tx` messages that we sent from the client.
+For this we'll have to set up a listener for the `:dat.sync.client/tx` messages that we sent from the client.
 If you're using regular http requests, you can just call this in your handler functions as you might normally handle a form submission and send a response indicating whether the transaction went through.
 In sente, you might do something like:
 
 
 ```clj
-(defmethod event-msg-handler :datsync.client/tx
+(defmethod event-msg-handler :dat.sync.client/tx
   [{:as app :keys [datomic ws-connection]} {:as ev-msg :keys [id ?data]}]
-  (let [tx-report @(datsync/apply-remote-tx! datomic ?data)]
+  (let [tx-report @(dat.sync/apply-remote-tx! datomic ?data)]
     (println "Do something with:" tx-report)))
 ```
 
@@ -193,7 +193,7 @@ Assuming we just send all changes to all clients using sente, you might write a 
   [tx-deltas]
   ;; This handler is where you would eventually set up subscriptions
   (try
-    (ws/broadcast! ws-connection [:datsync/tx-data tx-deltas])
+    (ws/broadcast! ws-connection [:dat.sync/tx-data tx-deltas])
     (catch Exception e
       (log/error "Failed to send transaction report to clients!")
       (.printStackTrace e))))
@@ -202,10 +202,10 @@ Assuming we just send all changes to all clients using sente, you might write a 
 This handler function should take a collection `tx-deltas` of `:db/add` and `:db/retract` tx forms which will automatically get computed from the datoms created in the transaction.
 This handler function is also where you could implement your own scope restriction functionality and read authorization security protocols if needed.
 
-We apply this handler function using the `datsync/start-transaction-listener!` function:
+We apply this handler function using the `dat.sync/start-transaction-listener!` function:
 
 ```clj
-(datsync/start-transaction-listener! (d/tx-report-queue conn) handle-transaction-report!)
+(dat.sync/start-transaction-listener! (d/tx-report-queue conn) handle-transaction-report!)
 ```
 
 This function currently takes the Java blocking queue returned by `d/tx-report-queue` and consumes all changes placed on that queue.
