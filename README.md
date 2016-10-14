@@ -149,7 +149,7 @@ In sente you could write a little function that wraps this as follows.
 
 ```clj
 (defn send-tx! [tx]
-  (ws/chsk-send! [:datsync.client/tx (datsync/datomic-tx conn tx)]))
+  (ws/chsk-send! [:dat.sync.client/tx (datsync/datomic-tx conn tx)]))
 ```
 
 ### On the server
