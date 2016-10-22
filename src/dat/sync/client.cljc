@@ -581,9 +581,18 @@
       (reactor/resolve-to app db
         [[:dat.remote/send-event! [:dat.sync.remote/tx translated-tx]]]))))
 
+(reactor/register-handler
+  ::request-bootstrap
+  (fn [app db _]
+    ;; Possibly flag some state somewhere saying bootstrap has taken place?
+    (log/info "Sending boostrap request!")
+    (reactor/with-effect
+      ;; This message will fire once the reaction has complete (that is, once the data is bootstrapped; It' lets you decide how your application
+      [:dat.reactor/dispatch! [:dat.remote/send-event! [:dat.sync.client/boostrap true]]]
+      db)))
 
 (reactor/register-handler
-  :dat.sync.client/bootstrap
+  ::bootstrap
   (fn [app db [_ tx-data]]
     ;; Possibly flag some state somewhere saying bootstrap has taken place?
     (log/info "Recieved bootstrap!" (take 10 tx-data))
@@ -604,6 +613,8 @@
     (let [remote-chan (remote/event-chan remote)]
       (log/info "Starting Datsync component")
       (dispatcher/dispatch! dispatcher [::merge-schema base-schema])
+      ;; This should get triggered by successful connection to the websocket
+      ;(dispatcher/dispatch! dispatcher [::request-bootstrap true])
       (log/info "Dispatched schema changes")
       (go-loop []
         (let [event (async/<! remote-chan)]

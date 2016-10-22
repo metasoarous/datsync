@@ -8,8 +8,8 @@
             [dat.spec.protocols :as protocols]
             [com.stuartsierra.component :as component]
             [taoensso.timbre :as log #?@(:cljs [:include-macros true])]
-            [taoensso.sente :as sente]
-            [taoensso.sente.packers.transit :as sente-transit]))
+            [taoensso.sente :as sente]))
+            ;[taoensso.sente.packers.transit :as sente-transit]))
 
 
 ;; ## Implement the comms protocols using Sente
@@ -22,14 +22,18 @@
       ;(defn tagged-fn [:datsync.server/db-fn])
       (cljs.reader/register-tag-parser! 'db/fn pr-str)))
 
+(def default-sente-options
+  {:chsk-route "/chsk"
+   :type :auto})
 
-(defrecord SenteRemote [chsk ch-recv out-chan send-fn state open?]
+
+(defrecord SenteRemote [chsk ch-recv out-chan send-fn state open? sente-options]
   component/Lifecycle
   (start [component]
     (log/info "Starting SenteRemote Component")
-    (let [out-chan (or out-chan (async/chan 100))
-          packer (sente-transit/get-flexi-packer :edn)
-          sente-fns (sente/make-channel-socket! "/chsk" {:type :auto :packer packer})
+    (let [sente-options (merge default-sente-options sente-options)
+          out-chan (or out-chan (async/chan 100))
+          sente-fns (sente/make-channel-socket! (:chsk-route sente-options) (dissoc sente-options :chsk-route))
           ch-recv (:ch-recv sente-fns)]
       ;; Set Sente to pipe it's events such that they all (at the top level) fit the standard re-frame shape
       (async/pipeline 1 out-chan (map (fn [x] [::event (:event x)])) ch-recv)
@@ -56,9 +60,18 @@
     out-chan))
 
 
+(defn new-sente-remote
+  "Options include `:sente-options`, which is passed as the second argument to `sente/make-channel-socket!`.
+  Additionally, the `:chsk-route` option of the `:sente-options` map is passed as the first argument to
+  `sente/make-channel-socket!`, assuming you don't want to use the default (`\"chsk\"`). You can see all
+  datsync defaults for these options in `default-sente-options`.
 
-(defn new-sente-remote []
-  (map->SenteRemote {}))
+  Additionally, note that you can specify via the options map your own `:out-chan`, which is the channel on which
+  output messages get put (the result of calling `dat.spec.protocols/remote-event-chan` on this system component)."
+  ([]
+   (new-sente-remote {}))
+  ([options]
+   (map->SenteRemote options)))
 
 
 ;; ## Install handler hooks; Note that the component in question here is not the remote, but the app
@@ -74,23 +87,23 @@
 
 (reactor/register-handler
   :chsk/state
-  (fn [app db [_ {:as ev-msg :keys [?data]}]]
+  (fn [app db [_ message]]
     (try
-      (if (:first-open? ev-msg)
-        (reactor/with-effect [:dat.remote/send-event! [:dat.sync.client/bootstrap nil]]
-          db)
+      ;; This or conditional takes care of different versions of sente
+      (if (or (-> message second :first-open?) (:first-open? message))
+        (do
+          (log/info "First channel socket open; Sending bootstrap message")
+          ;; Note: This needs to be a more explicit part of the dat.remote protocol/spec
+          (reactor/with-effect [:dat.remote/send-event! [:dat.remote/connected true]]
+            db))
         db)
       (catch #?(:clj Exception :cljs :default) e
         (log/error "Exception handling :chsk/state:" e)))))
 
 (reactor/register-handler
   :chsk/handshake
-  ;(fn [app db {:as ev-msg :keys [?data]}]
   (fn [app db [_ {:as ev-msg :keys [?data]}]]
-    (log/warn "You should probably write something here! This is a no-op.")
-    (log/debug "Calling :chsk/handshake with:" ev-msg)
-    ;; This is just to deal with how sente organizes things on it's chans; If we wanted though, we could
-    ;; manually track things here
+    (log/warn "Calling :chsk/handshare! You should probably write something here! (reactor/register-handler :chsk/handshake (fn [app db [_ hs-msg]] ...))")
     db))
 
 (reactor/register-handler
