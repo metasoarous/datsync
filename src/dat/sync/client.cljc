@@ -614,7 +614,6 @@
       (log/info "Starting Datsync component")
       (dispatcher/dispatch! dispatcher [::merge-schema base-schema])
       ;; This should get triggered by successful connection to the websocket
-      ;(dispatcher/dispatch! dispatcher [::request-bootstrap true])
       (log/info "Dispatched schema changes")
       (go-loop []
         (let [event (async/<! remote-chan)]
