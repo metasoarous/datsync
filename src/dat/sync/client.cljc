@@ -30,12 +30,18 @@
   "Takes a transaction map form and translates it into a collection of list forms"
   [m]
   ;; Ensure there is a :db/id key in the map
-  {:pre [(:db/id m)]}
-  (let [m-id (:db/id m)]
+  ;{:pre [(:db/id m)]}
+  (if-let [m-id (:db/id m)]
     (mapcat
       (fn [[k v]]
         (normalized-tx-list-form :db/add m-id k v))
-      (dissoc m :db/id))))
+      (dissoc m :db/id))
+    (do
+      (log/error "Tx map form does not have a :db/id:" m)
+      (let [message "Tx map form doesn't not have a :db/id"]
+        (throw
+          #?(:clj  (IllegalArgumentException. message)
+             :cljs (js/Error. message)))))))
 
 (defn normalized-tx-list-form
   "Takes a transaction list form and normalizes it's values, such that any maps or collections are expanded
@@ -442,6 +448,15 @@
          (fn [{:as db :keys [schema]}]
            (replace-schema db (utils/deep-merge schema schema-spec)))))
 
+(defn datom-tx-form
+  [datom]
+  (let [[e a v t b] datom]
+    [({true :db/add, false :db/retract} b) e a v]))
+
+(defn datoms-as-tx
+  [datoms]
+  (map datom-tx-form datoms))
+
 (defn apply-tx-data!
   ;; XXX This should really be apply-tx-datoms! or something; and we need to think clearly about how we
   ;; specify what goes in and comes out for the lib.
@@ -449,9 +464,7 @@
   [conn tx-data]
   (apply-remote-tx!
     conn
-    (map (fn [[e a v t b]]
-           [({true :db/add, false :db/retract} b) e a v])
-         tx-data)))
+    (datoms-as-tx tx-data)))
 
 
 
@@ -582,14 +595,21 @@
         [[:dat.remote/send-event! [:dat.sync.remote/tx translated-tx]]]))))
 
 (reactor/register-handler
+  :dat.remote/connected
+  (fn [app db _]
+    ;; Possibly flag some state somewhere saying bootstrap has taken place?
+    (reactor/resolve-to app db
+      ;; This message will fire once the reaction has complete (that is, once the data is bootstrapped; It' lets you decide how your application
+      [[::request-bootstrap true]])))
+
+(reactor/register-handler
   ::request-bootstrap
   (fn [app db _]
     ;; Possibly flag some state somewhere saying bootstrap has taken place?
-    (log/info "Sending boostrap request!")
-    (reactor/with-effect
+    (log/info "Sending bootstrap request!")
+    (reactor/resolve-to app db
       ;; This message will fire once the reaction has complete (that is, once the data is bootstrapped; It' lets you decide how your application
-      [:dat.reactor/dispatch! [:dat.remote/send-event! [:dat.sync.client/boostrap true]]]
-      db)))
+      [[:dat.remote/send-event! [::bootstrap true]]])))
 
 (reactor/register-handler
   ::bootstrap

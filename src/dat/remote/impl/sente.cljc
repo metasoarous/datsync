@@ -94,8 +94,8 @@
         (do
           (log/info "First channel socket open; Sending bootstrap message")
           ;; Note: This needs to be a more explicit part of the dat.remote protocol/spec
-          (reactor/with-effect [:dat.remote/send-event! [:dat.remote/connected true]]
-            db))
+          (reactor/resolve-to app db
+            [[:dat.remote/connected true]]))
         db)
       (catch #?(:clj Exception :cljs :default) e
         (log/error "Exception handling :chsk/state:" e)))))
