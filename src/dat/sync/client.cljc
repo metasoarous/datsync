@@ -412,7 +412,6 @@
    (let [tx (->> tx
                  normalize-tx
                  (translate-eids db))]
-         ;remote-tx-meta {:datasync.tx/origin :dat.sync.tx.origin/remote}]
          ;tx-report (d/with db tx (merge remote-tx-meta other-tx-meta))
      tx)))
      ;(concat tx
@@ -420,8 +419,12 @@
 
 (defn apply-remote-tx!
   {:todo "Handle errors inside the transaction function. Should trust datomic, but fallback is a good idea."}
-  [conn tx]
-  (transact-with-middleware! conn wrap-remote-tx tx))
+  ([conn tx]
+   (apply-remote-tx! conn tx))
+  ([conn tx tx-meta]
+   (let [remote-tx-meta {:dat.sync.prov/agent :dat.sync/remote}
+         tx-meta (merge remote-tx-meta tx-meta)]
+     (transact-with-middleware! conn wrap-remote-tx tx tx-meta))))
 
 ;; So... if we want local schema, we have to decide whether or not we want it to be queryable.
 ;; If we do then we must use apply-schema-tx! below.
@@ -579,10 +582,11 @@
     (log/info "Running remote-tx in :dat.sync/recv-remote-tx.")
     (let [normalized-tx (normalize-tx tx-data)
           translated-tx (translate-eids db normalized-tx)
-          schema-changes (tx-schema-changes db translated-tx)]
+          schema-changes (tx-schema-changes db translated-tx)
+          remote-tx-meta {:dat.sync.prov/agent :dat.sync/remote}]
       (reactor/resolve-to app db
         [(when (seq schema-changes) [::apply-schema-changes schema-changes])
-         [:dat.reactor/local-tx translated-tx]]))))
+         [:dat.reactor/local-tx translated-tx remote-tx-meta]]))))
 
 ;; Triggers
 (reactor/register-handler
