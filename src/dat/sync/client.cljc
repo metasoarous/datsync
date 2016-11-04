@@ -483,10 +483,15 @@
 ;; just like you can for the client XXX
 ;; Needs to be reworked overall as well
 
+;; Need to rename to remote-tx
+
 (defn datomic-tx
   [db tx]
-  (let [tx (normalize-tx tx)
-        ids (map second tx)
+  (let [tx (->> (normalize-tx tx)
+                (remove
+                  (fn [[_ _ a]]
+                    ;; This is something that should never exist on the server
+                    (#{:dat.sync.remote.db/id :db/id} a))))
         translated-tx (d/q '[:find ?op ?dat-e ?a ?dat-v
                              :in % $ [[?op ?e ?a ?v]]
                              :where [(get-else $ ?e :dat.sync.remote.db/id ?e) ?dat-e]
@@ -514,7 +519,7 @@
                               (not= ?vt-ident :db.type/ref)
                               [(ground ?ds-v) ?datomic-v]]]
                            db tx)]
-    (vec (remove #(= (nth % 2) :db/id) translated-tx))))
+    (vec translated-tx)))
 
 
 
