@@ -7,6 +7,7 @@
             [dat.sync.utils :as utils]
             [dat.spec.protocols :as protocols]
             [com.stuartsierra.component :as component]
+            [cognitect.transit] ;; undeclared dependency of sente
             [taoensso.timbre :as log #?@(:cljs [:include-macros true])]
             [taoensso.sente :as sente]
             [taoensso.sente.packers.transit :as sente-transit]))

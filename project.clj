@@ -6,6 +6,10 @@
   :min-lein-version "2.0.0"
   :dependencies [[org.clojure/clojure "1.7.0"]
                  [org.clojure/clojurescript "1.7.145"]
+                 [org.clojure/tools.logging "0.3.1"]
+
+                 [datreactor "0.0.1-alpha1-SNAPSHOT"]
+                 [datspec "0.0.1-alpha1-SNAPSHOT"]
 
                  ;; Do we need this?
                  [org.clojure/core.async "0.2.371"]
@@ -15,11 +19,16 @@
 
                  [reagent "0.5.1"]
                  [re-frame "0.5.0"]
-                 [posh "0.3.3.1"]
+                 [posh "0.3.4"]
                  [datascript "0.13.3"]
 
+                 [com.taoensso/timbre "4.7.0"]
+                 [com.taoensso/sente "1.8.1"]
+                 [com.cognitect/transit-clj "0.8.290"]
+                 [com.cognitect/transit-cljs "0.8.239"]
+
                  ;; Server db (datomic)
-                 [com.datomic/datomic-free "0.9.5327" :exclusions [joda-time]]
+                 [com.datomic/datomic-free "0.9.5327" :exclusions [joda-time com.google.guava/guava]]
 
                  ;; Not sure if we need; probably not... XXX
                  [bidi "1.21.1"]
@@ -43,7 +52,7 @@
   :cljsbuild { 
               :builds [
                        { :id "release"
-                         :source-paths ["src" "bench/src"]
+                         :source-paths ["src"]
                          :assert false
                          :compiler {
                                     :output-to     "release-js/datsync.bare.js"
@@ -59,7 +68,7 @@
 
   :profiles {
              :dev {
-                   :source-paths ["bench/src" "test" "dev" "src"]
+                   :source-paths ["test" "dev" "src"]
                    :plugins [
                              [lein-cljsbuild "1.1.2"]
                              [lein-typed "0.3.5"]]
@@ -67,7 +76,7 @@
                    :cljsbuild {
                                :builds [
                                         { :id "advanced"
-                                          :source-paths ["src" "bench/src" "test"]
+                                          :source-paths ["src" "test"]
                                           :compiler {
                                                      :output-to     "target/datsync.js"
                                                      :optimizations :advanced
@@ -77,7 +86,7 @@
                                                      :parallel-build true}}
 
                                         { :id "none"
-                                          :source-paths ["src" "bench/src" "test" "dev"]
+                                          :source-paths ["src" "test" "dev"]
                                           :compiler {
                                                      :main          datsync.test
                                                      :output-to     "target/datsync.js"
