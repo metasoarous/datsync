@@ -4,26 +4,29 @@
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :min-lein-version "2.0.0"
-  :dependencies [[org.clojure/clojure "1.7.0"]
-                 [org.clojure/clojurescript "1.7.145"]
+  :dependencies [[org.clojure/clojure "1.9.0-alpha6"] ; match version needed by other dat* bits
+                 [org.clojure/tools.reader "1.0.0-beta2"]
                  [org.clojure/tools.logging "0.3.1"]
+                 [org.clojure/clojurescript "1.9.36"]
+                 [commons-codec "1.10"]
 
                  [datreactor "0.0.1-alpha1-SNAPSHOT"]
                  [datspec "0.0.1-alpha1-SNAPSHOT"]
 
                  ;; Do we need this?
-                 [org.clojure/core.async "0.2.371"]
-                 [com.stuartsierra/component "0.3.0"]
+                 [org.clojure/core.async "0.2.395"]
+                 [com.stuartsierra/component "0.3.1"]
 
                  [environ "1.0.1"]
 
                  [reagent "0.5.1"]
                  [re-frame "0.5.0"]
-                 [posh "0.3.4"]
-                 [datascript "0.13.3"]
+                 [posh "0.5.5"]
+                 [datascript "0.15.0"]
 
-                 [com.taoensso/timbre "4.7.0"]
-                 [com.taoensso/sente "1.8.1"]
+                 [com.taoensso/timbre "4.7.4"]
+                 [com.taoensso/sente "1.11.0"]
+                 [com.taoensso/encore "2.88.1"]
                  [com.cognitect/transit-clj "0.8.290"]
                  [com.cognitect/transit-cljs "0.8.239"]
 

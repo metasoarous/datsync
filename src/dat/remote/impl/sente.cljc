@@ -7,7 +7,6 @@
             [dat.sync.utils :as utils]
             [dat.spec.protocols :as protocols]
             [com.stuartsierra.component :as component]
-            [cognitect.transit] ;; undeclared dependency of sente
             [taoensso.timbre :as log #?@(:cljs [:include-macros true])]
             [taoensso.sente :as sente]
             [taoensso.sente.packers.transit :as sente-transit]))
@@ -29,7 +28,7 @@
   (start [component]
     (log/info "Starting SenteRemote Component")
     (let [out-chan (or out-chan (async/chan 100))
-          packer (sente-transit/get-flexi-packer :edn)
+          packer (sente-transit/get-transit-packer)
           sente-fns (sente/make-channel-socket! "/chsk" {:type :auto :packer packer})
           ch-recv (:ch-recv sente-fns)]
       ;; Set Sente to pipe it's events such that they all (at the top level) fit the standard re-frame shape
