@@ -320,6 +320,13 @@ This function currently takes the Java blocking queue returned by `d/tx-report-q
 We'll eventually make it possible to pass in a `core.async` channel as well, so you can pull messages off Datomic's single `tx-report-queue` and mult them out to various processes that needed these notifications as well.
 
 
+## Contributing
+
+This project is developed in a "gitflow" methodology.
+Submit PRs to the `develop` branch.
+Releases will be merged to master and tagged with version numbers.
+
+
 ## Alpha Disclaimer
 
 This API is not yet stable.
