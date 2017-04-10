@@ -44,7 +44,7 @@ First, add the following to your `project.clj`:
 
 ### On the client (with system components)
 
-Datysnc includes some optional system components for setting things up on the client side.
+Datsync includes some optional system components for setting things up on the client side.
 You don't have to use these, if you'd rather just piece together the utility functions yourself.
 If you do, you can use the implementation and design of these components as guidance in your own setup/architecture.
 (There's also a small example below of how you'd set things up using Mount below).
