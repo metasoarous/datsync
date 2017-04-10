@@ -31,6 +31,10 @@
   component/Lifecycle
   (start [component]
     (log/info "Starting SenteRemote Component")
+    ;<<<<<<< buildable
+    ;(let [out-chan (or out-chan (async/chan 100))
+          ;packer (sente-transit/get-transit-packer)
+          ;sente-fns (sente/make-channel-socket! "/chsk" {:type :auto :packer packer})
     (let [sente-options (merge default-sente-options sente-options)
           out-chan (or out-chan (async/chan 100))
           sente-fns (sente/make-channel-socket! (:chsk-route sente-options) (dissoc sente-options :chsk-route))
@@ -87,6 +91,20 @@
 
 (reactor/register-handler
   :chsk/state
+  ;<<<<<<< buildable
+  ;(fn [app db [_ [last-state curr-state]]]
+  ;  (try
+  ;    (log/info "in chsk/state handler for msg:" [last-state curr-state])
+  ;    (if (or (:first-open? curr-state)
+  ;            (and (:ever-opened? curr-state)
+  ;                 (not (:ever-opened? last-state))))
+  ;      (do
+  ;        (log/info "Requesting bootstrap...")
+  ;        (reactor/with-effect [:dat.remote/send-event! [:dat.sync.client/bootstrap nil]]
+  ;          db))
+  ;      (do
+  ;        (log/info "Not the first open; no bootstrap needed")
+  ;        db))
   (fn [app db [_ message]]
     (try
       ;; This or conditional takes care of different versions of sente
@@ -99,6 +117,9 @@
         db)
       (catch #?(:clj Exception :cljs :default) e
         (log/error "Exception handling :chsk/state:" e)))))
+
+(reactor/register-handler :chsk/ws-ping
+  (fn [& args] true))
 
 (reactor/register-handler
   :chsk/handshake
