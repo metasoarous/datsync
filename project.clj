@@ -36,7 +36,7 @@
                  [bidi "2.0.16"]
                  [io.rkn/conformity "0.4.0"]
                  [com.rpl/specter "0.13.2"]
-                 [prismatic/plumbing "0.5.3"]
+                 [prismatic/plumbing "0.5.3"]]
 
   ;; ## Snipped from DataScript's
   ;; ============================
