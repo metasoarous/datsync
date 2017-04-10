@@ -50,11 +50,12 @@
   (= \_ (first (name attr-kw))))
 
 (defn tempid-map
+  ;; TODO Need to be able to customize partition here...
   ([e]
    (if (and (integer? e) (< e 0)) (d/tempid :db.part/user e) e))
   ([db a e]
    (if (and (keyword? a)
-            ;; Note; this doesn't cover reverse reference attributes...
+            ;; TODO Note; this doesn't cover reverse reference attributes...
             (or (reverse-ref-attribute? a)
                 (d/q '[:find ?a . :in $ ?a-ident :where [?a :db/ident ?a-ident] [?a :db/valueType :db.type/ref]] db a))
             ;; for the attribute...
@@ -76,6 +77,24 @@
         tx' (mapv (partial translate-tx-form db tempid-map) tx)]
     (d/transact db-conn tx')))
 
+
+(defn as-transaction
+  "Translates a collection of datoms into a collection of :db/add & :db/retract statements, suitable for transaction.
+  Leaves negative int -> d/tempid translation up to apply-remote-tx (XXX this should be modified)."
+  ;; TODO Think about how we pass in partition here?
+  ;; TODO Move over all negative int -> d/tempid translation here
+  [datoms]
+  (map
+    (fn [[e a v _ b]]
+      ;; Hmm... should we do something with the tx eid; save as tx-meta?
+      ;; Maybe this should be upstream...
+      [(if b :db/add :db/retract) e a v])
+    datoms))
+
+(defn apply-remote-datoms!
+  {:todo "Handle errors inside the transaction function. Should trust datomic, but fallback is a good idea."}
+  [conn datoms]
+  (apply-remote-tx! conn (as-transaction datoms)))
 
 ;; If you're using regular http requests, you can just call this in your handler functions as you might
 ;; normally handle a form submission.
@@ -115,9 +134,7 @@
   [datomic-report-queue handler-function]
   (future
     (loop []
-      ;; Right now datomic-report-queue is a java blocking queue; would be nice to make this dispatch and work
-      ;; with a core.async tap on datomic's report queue (note that a tap would be necessary if you wanted to
-      ;; have multiple consumers of the queue...
+      ;; TODO Assumes queue is a java blocking queue; should dispatch to work with a core.async tap/chan for multiple queue consumers
       ;; Where should we try catch if at all?
       (let [tx-report (.take datomic-report-queue)]
         ;; Will our handler ever need the full tx-report?

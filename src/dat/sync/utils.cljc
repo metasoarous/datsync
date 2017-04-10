@@ -1,8 +1,8 @@
 (ns dat.sync.utils
-  (:require #?@(:clj [[clojure.core.match :as match :refer [match]]
-                      [clojure.tools.logging :as log]]
+  (:require #?@(:clj [[clojure.core.match :as match :refer [match]]]
                 :cljs [[cljs.core.match :refer-macros [match]]
-                       [cljs.pprint]])))
+                       [cljs.pprint]])
+            [taoensso.timbre :as log #?@(:cljs [:include-macros true])]))
 
 
 (declare inner-merge)
@@ -21,8 +21,8 @@
   (mapv deep-merge xs ys))
 
 (def default-inner-merge-opts
-  {:coll-merge concat ;; other options; merge-zip
-   })
+  {:coll-merge concat}) ;; other options; merge-zip
+
 
 (defn inner-merge
   ([x y] (inner-merge default-inner-merge-opts x y))
