@@ -8,8 +8,8 @@
             [dat.spec.protocols :as protocols]
             [com.stuartsierra.component :as component]
             [taoensso.timbre :as log #?@(:cljs [:include-macros true])]
-            [taoensso.sente :as sente]))
-            ;[taoensso.sente.packers.transit :as sente-transit]))
+            [taoensso.sente :as sente]
+            [taoensso.sente.packers.transit :as sente-transit]))
 
 
 ;; ## Implement the comms protocols using Sente
@@ -24,7 +24,8 @@
 
 (def default-sente-options
   {:chsk-route "/chsk"
-   :type :auto})
+   :type :auto
+   :packer (sente-transit/get-transit-packer)})
 
 
 (defrecord SenteRemote [chsk ch-recv out-chan send-fn state open? sente-options]
