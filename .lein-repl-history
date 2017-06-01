@@ -1,0 +1,6 @@
+(in-ns 'dat.sync.core
+)
+(new-datsync)
+base-schema
+(load-file "src/cljc/dat/sync/core.cljc")
+(clojure.core/load-file "src/cljc/dat/sync/core.cljc")

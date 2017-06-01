@@ -1,4 +1,4 @@
-(defproject datsync "0.0.1-alpha2-SNAPSHOT"
+(defproject datsync "0.0.1-alpha3-SNAPSHOT"
   :description "Datomic <-> DataScript syncing/replication utilities"
   :url "http://github.com/metasoarous/datsync"
   :license {:name "Eclipse Public License"
@@ -18,6 +18,7 @@
                  [com.stuartsierra/component "0.3.2"]
 
                  [environ "1.1.0"]
+;;                  [org.onyxplatform/onyx-local-rt "0.10.0.0-beta8"]
 
                  [reagent "0.6.0"]
                  ;[re-frame "0.9.1"]
@@ -45,11 +46,12 @@
   ;;
   ;; Leaving this out for now
   ;:global-vars {*warn-on-reflection* true}
+  :source-paths ["src/cljc" "src/clj"]
 
-  :cljsbuild { 
+  :cljsbuild {
               :builds [
                        { :id "release"
-                         :source-paths ["src"]
+                         :source-paths ["src/cljc" "src/cljs"]
                          :assert false
                          :compiler {
                                     :output-to     "release-js/datsync.bare.js"
@@ -70,7 +72,7 @@
                    :cljsbuild {
                                :builds [
                                         { :id "advanced"
-                                          :source-paths ["src" "test"]
+                                          :source-paths ["src/cljc" "src/cljs" "test"]
                                           :compiler {
                                                      :output-to     "target/datsync.js"
                                                      :optimizations :advanced
@@ -80,7 +82,7 @@
                                                      :parallel-build true}}
 
                                         { :id "none"
-                                          :source-paths ["src" "test" "dev"]
+                                          :source-paths ["src/cljc" "src/cljs" "test" "dev"]
                                           :compiler {
                                                      :main          datsync.test
                                                      :output-to     "target/datsync.js"
@@ -89,7 +91,7 @@
                                                      :source-map    true
                                                      :recompile-dependents false
                                                      :parallel-build true}}]}}}
-  
+
   :clean-targets ^{:protect false} [
                                     "target"
                                     "release-js/datsync.bare.js"
@@ -98,7 +100,7 @@
   ;; ## Back to from extraction...
   ;; =============================
 
-  ;; Once we're ready 
+  ;; Once we're ready
   ;:core.typed {:check []
                ;:check-cljs []}
   ;; Not sure if we need these either
