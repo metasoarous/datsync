@@ -4,13 +4,151 @@
   (:require #?@(:clj [[clojure.core.async :as async :refer [go go-loop]]]
                 :cljs [[cljs.core.async :as async]])
             [dat.remote :as remote]
+            [datascript.db]
             [dat.reactor :as reactor]
             [dat.reactor.dispatcher :as dispatcher]
-            [dat.sync.utils :as utils]
+            [dat.sync.utils :as utils :refer [cat-into]]
             [datascript.core :as ds]
             #?(:clj [datomic.api :as dapi])
             [com.stuartsierra.component :as component]
             [taoensso.timbre :as log #?@(:cljs [:include-macros true])]))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; UNIFIED - treating server and client as peers
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+(defn gen-uuid []
+  (ds/squuid))
+
+(defn globalize-uuident [db eid]
+  (::uuident (ds/entity db eid)))
+
+(defn localize-uuident [db euuid]
+  (ds/entity db [::uuident euuid]))
+
+(def testtt (ds/create-conn {::uuident {:db/unique :db.unique/identity}
+                             :other-thing {:db/valueType :db.type/ref}}))
+
+(defn datom><tx []
+  (map
+    (fn [[e a v t ?add]]
+      [(if ?add :db/add :db/retract) e a v t]
+      )))
+
+(defn datoms-identer [{:as local-db :keys [schema]} uuident]
+  (map
+    (fn [[e a v t ?add]]
+      (let [?many (= :db.cardinality/many (get-in schema [a :db/cardinality]))
+            ?ref (= :db.type/ref (get-in schema [a :db/valueType]))]
+        [(uuident local-db e)
+         a
+         (if-not ?ref
+           v
+           (if (and ?many (coll? v))
+             (map (partial uuident local-db) v)
+             (uuident local-db v)))
+         t
+         ?add]))))
+
+(defn datom><gdatom [conn]
+  (datoms-identer @conn globalize-uuident))
+
+(defn gdatom><datom [conn]
+  (datoms-identer @conn localize-uuident))
+
+(defn datom><tx-uuidents []
+  (comp
+    (filter (fn [[_ a _ _ _]]
+              (= a ::uuident)))
+    (map (fn [[e a v t ?add]]
+           {;;???: :db/id #db/id[:db.part/user]
+            ::uuident v}))))
+
+(defn middle-with [db tx-data {:as tx-meta :keys [:datascript.db/tx-middleware]}]
+  {:pre [(datascript.db/db? db)]}
+  ;; ???: skipping filtered db check
+  ((if tx-middleware (tx-middleware datascript.db/transact-tx-data) datascript.db/transact-tx-data)
+   (datascript.db/map->TxReport
+     {:db-before db
+      :db-after  db
+      :tx-data   []
+      :tempids   {}
+      :tx-meta   tx-meta}) tx-data))
+
+(defn uuident-middleware [transact]
+  (fn [report txs]
+    (let [{:as report :keys [db-after tx-data]} (transact report txs)]
+      (log/debug "middling")
+      (transact
+        report
+        (into
+          []
+          (comp
+            (map (fn [[eid _ _ _ _]] eid))
+            (distinct)
+            (remove #(::uuident (ds/entity db-after %)))
+            (map (fn [eid]
+                   [:db/add eid ::uuident (gen-uuid)])))
+          tx-data)))))
+
+(defn txs><gdatoms [conn]
+  (comp
+    (map
+      (fn [txs]
+        (middle-with
+          @conn
+          txs
+          (assoc (meta txs) :datascript.db/tx-middleware uuident-middleware))))
+    (map #(into [] (datom><gdatom conn) %))))
+
+(defn go-txs-from-world! [in conn]
+  ;; TODO: handle schema txs
+  (go-loop []
+    (let [{:keys [datoms]} (async/<! in)]
+      (ds/transact!
+        conn
+        (into
+          (into
+            []
+            (datom><tx-uuidents)
+            datoms)
+          (comp
+            (remove
+              (fn [[_ a _ _ _]]
+                (= a ::uuident)))
+            (gdatom><datom conn)
+            (datom><tx))
+          datoms)))
+           (recur)))
+
+(defn create-txs-to-world-chan! [conn]
+  (async/chan 1 (txs><gdatoms conn)))
+
+(defn transact! [{:as world :keys [out]} txs]
+  (async/put! out txs))
+
+;; TODO:  this is the wrong approach. need to split these things into the remote and reactor. the bare bones should look more like new-datsync. Possibly define some of these functions and put them into the onyx reactor env.
+(defrecord WorldTransactor [datomic in out]
+  component/Lifecycle
+  (start [component]
+    (let [datomic (or datomic {:conn (ds/create-conn)})
+          out-chan (create-txs-to-world-chan! (:conn datomic))
+          in-chan (async/chan)]
+      (go-txs-from-world! in-chan (:conn datomic))
+      (assoc component
+        :datomic datomic
+        :in in-chan
+        :out out-chan)))
+  (stop [component]
+    (assoc component
+      :datomic nil
+      :in nil
+      :out nil)))
+
+;; ???:  recv-remote-txs sends them to in-chan
+;;       send-remote-txs send them to out-chan
+
+(defn create-world []
+  (map->WorldTransactor {}))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; SERVER - from server.clj
@@ -172,8 +310,13 @@
 ;;
 ;;     (start-transaction-listener! (dapi/tx-report-queue conn) handle-transaction-report!)
 
-
-
+#?(:clj
+(defn go-tx-report! [datomic-report-queue tx-chan]
+  (future
+    (loop []
+      (let [tx-report (.take datomic-report-queue)]
+        (async/put! tx-chan (tx-report-deltas tx-report))
+        (recur))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; CLIENT - from client.cljc
@@ -747,7 +890,7 @@
 
   Note that (for now) it is assumed that new entities (relative to db-before) assert some identity attribute other than
   the local id. This will soon be either validated, or 'fixed' via submission of a transaction which generates ids where
-  needed, and submits a transaction which fixes these issues. Note that it is also assumed that whatever client recieves
+  needed, and submits a transaction which fixes these issues. Note that it is also assumed that whatever client receives
   this payload already has identity mappings for all data up to db-before. Otherwise, lookups may fail to resolve remotely."
   (log/info "Calling globalize datoms")
   (let [;; Figure out what our ref attributes are
@@ -872,15 +1015,20 @@
 ;; May need to separate the schema and the "other" data, but for now, we'll leave it at this
 (reactor/register-handler
   :dat.sync.client/recv-remote-tx
-  (fn [app db [_ tx-data]]
+  (fn [{:as app :keys [world]} db [_ tx-data]]
+;;     (async/put!
+;;       (:in world)
+;;       tx-data)
     (log/info "Running remote-tx in :dat.sync/recv-remote-tx.")
     (let [normalized-tx (normalize-tx tx-data)
           translated-tx (translate-eids db normalized-tx)
           schema-changes (tx-schema-changes db translated-tx)
-          remote-tx-meta {:dat.sync.prov/agent :dat.sync/remote}]
+          remote-tx-meta {:dat.sync.prov/agent :dat.sync/remote}
+          ]
       (reactor/resolve-to app db
         [(when (seq schema-changes) [:dat.sync.client/apply-schema-changes schema-changes])
-         [:dat.reactor/local-tx translated-tx remote-tx-meta]]))))
+         [:dat.reactor/local-tx translated-tx remote-tx-meta]]))
+    ))
 
 ;; Triggers
 (reactor/register-handler
@@ -913,7 +1061,7 @@
   :dat.sync.client/bootstrap
   (fn [app db [_ tx-data]]
     ;; Possibly flag some state somewhere saying bootstrap has taken place?
-    (log/info "Recieved bootstrap!" (take 10 tx-data))
+    (log/info "Received bootstrap!" (take 10 tx-data))
     (reactor/with-effect
       ;; This message will fire once the reaction has complete (that is, once the data is bootstrapped; It' lets you decide how your application
       [:dat.reactor/dispatch! [:dat.sync.client.bootstrap/complete? true]]

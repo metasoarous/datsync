@@ -49,5 +49,23 @@
   ([x]
    (tr "" x)))
 
+;;
+;; cat-into takes a collection to merge into, any number of transducers, and at least one sequence. The sequences are treated as a single sequence back to back.
+;;
+;; args -
+;;   coll [transucers ...]* [sequences ...]+
+;;
+(defn cat-into
+  "Any number of transducers and sequences concatonated into one sequence."
+  [coll & xfns-and-seqs]
+  (let [{xfns true
+         seqs false} (if (fn? (first xfns-and-seqs))
+                       (group-by fn? xfns-and-seqs)
+                       {false xfns-and-seqs}
+                       )]
+    (into coll
+          (apply comp (into [cat] xfns))
+          seqs)))
+
 
 
