@@ -7,6 +7,10 @@
 
 (declare inner-merge)
 
+(defn deref-or-value
+  [val-or-atom]
+  (if (satisfies? #?(:cljs IDeref :clj clojure.lang.IDeref) val-or-atom) @val-or-atom val-or-atom))
+
 (defn deep-merge
   ([map1] map1)
   ([map1 map2]

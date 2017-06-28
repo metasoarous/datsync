@@ -7,7 +7,7 @@
             [datascript.db]
             [dat.reactor :as reactor]
             [dat.reactor.dispatcher :as dispatcher]
-            [dat.sync.utils :as utils :refer [cat-into]]
+            [dat.sync.utils :as utils :refer [cat-into deref-or-value]]
             [datascript.core :as ds]
             #?(:clj [datomic.api :as dapi])
             [com.stuartsierra.component :as component]
@@ -25,8 +25,10 @@
 (defn localize-uuident [db euuid]
   (ds/entity db [::uuident euuid]))
 
-(def testtt (ds/create-conn {::uuident {:db/unique :db.unique/identity}
+(comment
+  (def testtt (ds/create-conn {::uuident {:db/unique :db.unique/identity}
                              :other-thing {:db/valueType :db.type/ref}}))
+  )
 
 (defn datom><tx []
   (map
@@ -49,11 +51,11 @@
          t
          ?add]))))
 
-(defn datom><gdatom [conn]
-  (datoms-identer @conn globalize-uuident))
+(defn datom><gdatom [db-or-conn]
+  (datoms-identer (deref-or-value db-or-conn) globalize-uuident))
 
-(defn gdatom><datom [conn]
-  (datoms-identer @conn localize-uuident))
+(defn gdatom><datom [db-or-conn]
+  (datoms-identer (deref-or-value db-or-conn) localize-uuident))
 
 (defn datom><tx-uuidents []
   (comp
@@ -90,65 +92,43 @@
                    [:db/add eid ::uuident (gen-uuid)])))
           tx-data)))))
 
-(defn txs><gdatoms [conn]
-  (comp
-    (map
-      (fn [txs]
-        (middle-with
-          @conn
-          txs
-          (assoc (meta txs) :datascript.db/tx-middleware uuident-middleware))))
-    (map #(into [] (datom><gdatom conn) %))))
+;; (defn txs><gdatoms [conn]
+;;   (comp
+;;     (map
+;;       (fn [txs]
+;;         (middle-with
+;;           @conn
+;;           txs
+;;           (assoc (meta txs) :datascript.db/tx-middleware uuident-middleware))))
+;;     (map #(into [] (datom><gdatom conn) %))))
 
-(defn go-txs-from-world! [in conn]
-  ;; TODO: handle schema txs
-  (go-loop []
-    (let [{:keys [datoms]} (async/<! in)]
-      (ds/transact!
-        conn
-        (into
-          (into
-            []
-            (datom><tx-uuidents)
-            datoms)
-          (comp
-            (remove
-              (fn [[_ a _ _ _]]
-                (= a ::uuident)))
-            (gdatom><datom conn)
-            (datom><tx))
-          datoms)))
-           (recur)))
+(defn ^:export snap-transact [{:keys [txs :dat.sync/db-snap]}]
+  (assoc
+    (middle-with
+      db-snap
+      txs
+      (assoc (meta txs) :datascript.db/tx-middleware uuident-middleware))
+    :dat.sync/event :dat.sync/tx-report))
 
-(defn create-txs-to-world-chan! [conn]
-  (async/chan 1 (txs><gdatoms conn)))
+(defn ^:export tx-report->gdatoms [{:as seg :keys [tx-data db-after]}]
+  {:dat.sync/event :dat.sync/gdatoms
+   :datoms (into [] (datom><gdatom db-after) tx-data)})
 
-(defn transact! [{:as world :keys [out]} txs]
-  (async/put! out txs))
-
-;; TODO:  this is the wrong approach. need to split these things into the remote and reactor. the bare bones should look more like new-datsync. Possibly define some of these functions and put them into the onyx reactor env.
-(defrecord WorldTransactor [datomic in out]
-  component/Lifecycle
-  (start [component]
-    (let [datomic (or datomic {:conn (ds/create-conn)})
-          out-chan (create-txs-to-world-chan! (:conn datomic))
-          in-chan (async/chan)]
-      (go-txs-from-world! in-chan (:conn datomic))
-      (assoc component
-        :datomic datomic
-        :in in-chan
-        :out out-chan)))
-  (stop [component]
-    (assoc component
-      :datomic nil
-      :in nil
-      :out nil)))
-
-;; ???:  recv-remote-txs sends them to in-chan
-;;       send-remote-txs send them to out-chan
-
-(defn create-world []
-  (map->WorldTransactor {}))
+(defn ^:export gdatoms->local-txs [{:keys [datoms :dat.sync/db-snap]}]
+  {:dat.sync/event :dat.sync/local-txs
+   :txs
+   (into
+     (into
+       []
+       (datom><tx-uuidents)
+       datoms)
+     (comp
+       (remove
+         (fn [[_ a _ _ _]]
+           (= a ::uuident)))
+       (gdatom><datom db-snap)
+       (datom><tx))
+     datoms)})
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; SERVER - from server.clj
