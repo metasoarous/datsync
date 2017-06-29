@@ -9,7 +9,9 @@
             [com.stuartsierra.component :as component]
             [taoensso.timbre :as log #?@(:cljs [:include-macros true])]
             [taoensso.sente :as sente]
-            [taoensso.sente.packers.transit :as sente-transit]))
+            [taoensso.sente.packers.transit :as sente-transit]
+            #?(:clj [taoensso.sente.server-adapters.http-kit :as sente-http])
+            ))
 
 
 ;; ## Implement the comms protocols using Sente
@@ -28,9 +30,9 @@
    :packer (sente-transit/get-transit-packer)})
 
 
-(defrecord SenteRemote [chsk ch-recv out-chan send-fn state open? sente-options]
+(defrecord SenteRemote [chsk peers ch-recv out-chan send-fn state open? sente-options server? ws-handlers]
   component/Lifecycle
-  (start [component]
+  (start [remote]
     (log/info "Starting SenteRemote Component")
     ;<<<<<<< buildable
     ;(let [out-chan (or out-chan (async/chan 100))
@@ -38,30 +40,43 @@
           ;sente-fns (sente/make-channel-socket! "/chsk" {:type :auto :packer packer})
     (let [sente-options (merge default-sente-options sente-options)
           out-chan (or out-chan (async/chan 100))
-          sente-fns (sente/make-channel-socket! (:chsk-route sente-options) (dissoc sente-options :chsk-route))
-          ch-recv (:ch-recv sente-fns)]
+          {:as sente-fns :keys [ch-recv send-fn connected-uids
+                    ajax-post-fn ajax-get-or-ws-handshake-fn]}
+          (if server?
+            #?(:clj (sente/make-channel-socket! sente-http/http-kit-adapter {:packer (sente-transit/get-transit-packer)})
+              :cljs (throw "Sente cannot run in server mode in cljs"))
+            (sente/make-channel-socket! (:chsk-route sente-options) (dissoc sente-options :chsk-route)))]
       ;; Set Sente to pipe it's events such that they all (at the top level) fit the standard re-frame shape
       (async/pipeline 1 out-chan (map (fn [x] [::event (:event x)])) ch-recv)
       ;; Return component with state assoc'd in
-      (merge component
-             sente-fns
-             {:out-chan out-chan
-              :open? (atom false)})))
-  (stop [component]
+      (assoc remote
+        :out-chan out-chan
+        :open? (atom false)
+        :peers connected-uids
+        :send-fn send-fn
+        :ch-recv ch-recv
+        :ring-handlers (when server? {:get ajax-get-or-ws-handshake-fn
+                                      :put ajax-post-fn}))))
+  (stop [remote]
     (log/info "Stopping SenteRemote component")
     (try
       ;(when out-chan (async/close! out-chan))
       ;(when ch-recv (async/close! ch-recv))
       (log/debug "SenteRemote stopped successfully")
-      (assoc component :ch-recv nil :out-chan nil)
+      (assoc remote :ch-recv nil :out-chan nil)
       (catch #?(:clj Exception :cljs :default) e
         (log/error "Error stopping SenteRemote:" e)
-        component)))
+        remote)))
   protocols/PRemoteSendEvent
-  (send-event! [component event]
-    (send-fn event))
+  (send-event! [{:as remote :keys [peers]} event]
+     ;; TODO: send to all peers when not a client
+     (if peers
+       (doseq [uid (:any @peers)] (protocols/send-event! remote uid event))
+       (send-fn event)))
+  (send-event! [remote peer-id event]
+    (send-fn peer-id event))
   protocols/PRemoteEventChan
-  (remote-event-chan [component]
+  (remote-event-chan [remote]
     out-chan))
 
 
