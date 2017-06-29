@@ -25,45 +25,46 @@
       (cljs.reader/register-tag-parser! 'db/fn pr-str)))
 
 (def default-sente-options
-  {:chsk-route "/chsk"
-   :type :auto
-   :packer (sente-transit/get-transit-packer)})
+  {:packer (sente-transit/get-transit-packer)})
 
 
-(defrecord SenteRemote [chsk peers ch-recv out-chan send-fn state open? sente-options server? ws-handlers]
+(defrecord SenteRemote [peers ch-recv event-chan send-fn open? sente-options
+                        ;; server specific:
+                        server? server-stop ring-handlers]
   component/Lifecycle
   (start [remote]
     (log/info "Starting SenteRemote Component")
-    ;<<<<<<< buildable
-    ;(let [out-chan (or out-chan (async/chan 100))
-          ;packer (sente-transit/get-transit-packer)
-          ;sente-fns (sente/make-channel-socket! "/chsk" {:type :auto :packer packer})
-    (let [sente-options (merge default-sente-options sente-options)
-          out-chan (or out-chan (async/chan 100))
+    (let [chsk-route (or (:chsk-route sente-options) "/chsk")
+          sente-options (merge default-sente-options (dissoc sente-options :chsk-route))
+          event-chan (or event-chan (async/chan 100))
           {:as sente-fns :keys [ch-recv send-fn connected-uids
                     ajax-post-fn ajax-get-or-ws-handshake-fn]}
           (if server?
-            #?(:clj (sente/make-channel-socket! sente-http/http-kit-adapter {:packer (sente-transit/get-transit-packer)})
+            #?(:clj (sente/make-channel-socket! sente-http/http-kit-adapter sente-options)
               :cljs (throw "Sente cannot run in server mode in cljs"))
-            (sente/make-channel-socket! (:chsk-route sente-options) (dissoc sente-options :chsk-route)))]
-      ;; Set Sente to pipe it's events such that they all (at the top level) fit the standard re-frame shape
-      (async/pipeline 1 out-chan (map (fn [x] [::event (:event x)])) ch-recv)
-      ;; Return component with state assoc'd in
+            (sente/make-channel-socket! chsk-route sente-options))
+          server-stop
+          (if server?
+            (sente/start-chsk-router! ch-recv (fn [event] (async/put! event-chan event)))
+            ;; Set Sente to pipe it's events such that they all (at the top level) fit the standard re-frame shape. ???: this should probably be reworked to use plain maps aka segments
+            (async/pipeline 1 event-chan (map (fn [x] [::event (:event x)])) ch-recv))]
       (assoc remote
-        :out-chan out-chan
+        :event-chan event-chan
         :open? (atom false)
         :peers connected-uids
         :send-fn send-fn
         :ch-recv ch-recv
-        :ring-handlers (when server? {:get ajax-get-or-ws-handshake-fn
+        :ring-handlers (when server? {:route chsk-route
+                                      :get ajax-get-or-ws-handshake-fn
                                       :put ajax-post-fn}))))
   (stop [remote]
     (log/info "Stopping SenteRemote component")
     (try
-      ;(when out-chan (async/close! out-chan))
+      ;(when event-chan (async/close! event-chan))
       ;(when ch-recv (async/close! ch-recv))
       (log/debug "SenteRemote stopped successfully")
-      (assoc remote :ch-recv nil :out-chan nil)
+      (when server? (server-stop))
+      (assoc remote :ch-recv nil :event-chan nil)
       (catch #?(:clj Exception :cljs :default) e
         (log/error "Error stopping SenteRemote:" e)
         remote)))
@@ -77,7 +78,7 @@
     (send-fn peer-id event))
   protocols/PRemoteEventChan
   (remote-event-chan [remote]
-    out-chan))
+    event-chan))
 
 
 (defn new-sente-remote
@@ -86,7 +87,7 @@
   `sente/make-channel-socket!`, assuming you don't want to use the default (`\"chsk\"`). You can see all
   datsync defaults for these options in `default-sente-options`.
 
-  Additionally, note that you can specify via the options map your own `:out-chan`, which is the channel on which
+  Additionally, note that you can specify via the options map your own `:event-chan`, which is the channel on which
   output messages get put (the result of calling `dat.spec.protocols/remote-event-chan` on this system component)."
   ([]
    (new-sente-remote {}))

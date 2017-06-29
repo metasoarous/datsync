@@ -1069,7 +1069,6 @@
   (stop [component]
     component))
 
-
 (defn new-datsync []
   (map->Datsync {}))
 
