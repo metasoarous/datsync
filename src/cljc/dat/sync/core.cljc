@@ -9,6 +9,7 @@
             [dat.reactor.dispatcher :as dispatcher]
             [dat.sync.utils :as utils :refer [cat-into deref-or-value]]
             [datascript.core :as ds]
+            [dat.spec.protocols :as protocols]
             #?(:clj [datomic.api :as dapi])
             [com.stuartsierra.component :as component]
             [taoensso.timbre :as log #?@(:cljs [:include-macros true])]))
@@ -250,15 +251,16 @@
 
 ;; The easiest thing to do here is take the tx-data (datoms) produced by each transaction and convert those to
 ;; :db/add and :db/retract statements which we can send to clients.
-#?(:clj
 (defn tx-report-deltas
   [{:as tx-report :keys [db-after tx-data]}]
-  (->> tx-data
+  #?(:clj
+      (->> tx-data
        (dapi/q '[:find ?e ?aname ?v ?t ?added
               :in $ [[?e ?a ?v ?t ?added]]
               :where [?a :db/ident ?aname]]
            db-after)
-       (map (fn [[e a v t b]] [({true :db/add false :db/retract} b) e a v])))))
+       (map (fn [[e a v t b]] [({true :db/add false :db/retract} b) e a v])))
+      :cljs (throw "tx-report-deltas not supported in cljs")))
 
 
 ;; For synchronous request/resonse cycle, the above should be enough to craft a response from the tx results.
@@ -290,12 +292,34 @@
 ;;
 ;;     (start-transaction-listener! (dapi/tx-report-queue conn) handle-transaction-report!)
 
+
+;;
+
+(defn legacy-event->seg [event]
+  (if (vector? event)
+    {:dat.reactor/event :dat.reactor/legacy
+     :event event}
+    event))
+
+(defn legacy-event><seg []
+  (map legacy-event->seg))
+
+(def filter-tx-deltas identity)
+
+(defn ^:export handle-legacy-tx-report [tx-report]
+  (try
+    (let [tx-deltas (filter-tx-deltas (tx-report-deltas tx-report))]
+      (legacy-event->seg [:dat.sync.client/recv-remote-tx tx-deltas]))
+    (catch #?(:clj Exception :cljs :default) e
+      (log/error "Failed to send transaction report to clients!")
+      (.printStackTrace e))))
+
 #?(:clj
 (defn go-tx-report! [datomic-report-queue tx-chan]
   (future
     (loop []
       (let [tx-report (.take datomic-report-queue)]
-        (async/put! tx-chan (tx-report-deltas tx-report))
+        (async/put! tx-chan tx-report)
         (recur))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -995,10 +1019,7 @@
 ;; May need to separate the schema and the "other" data, but for now, we'll leave it at this
 (reactor/register-handler
   :dat.sync.client/recv-remote-tx
-  (fn [{:as app :keys [world]} db [_ tx-data]]
-;;     (async/put!
-;;       (:in world)
-;;       tx-data)
+  (fn [app db [_ tx-data]]
     (log/info "Running remote-tx in :dat.sync/recv-remote-tx.")
     (let [normalized-tx (normalize-tx tx-data)
           translated-tx (translate-eids db normalized-tx)
@@ -1071,5 +1092,30 @@
 
 (defn new-datsync []
   (map->Datsync {}))
+
+(defrecord DatsyncServer [dispatcher remote transactor]
+  component/Lifecycle
+  (start [component]
+    (let [] ;; ???: kill-chan
+      (log/info "Starting Datsync component")
+      ;; This should get triggered by successful connection to the websocket
+      (log/info "Dispatched schema changes")
+      (async/pipeline
+        1
+        (protocols/dispatcher-event-chan dispatcher)
+;;         (map #(assoc % :dat.sync/event-source :dat.sync/remote))
+        (map #(assoc % :dat.reactor/event :dat.reactor/legacy))
+        (protocols/remote-event-chan remote))
+      (async/pipeline
+        1
+        (protocols/dispatcher-event-chan dispatcher)
+        (map #(assoc % :dat.sync/event-source :dat.sync/tx-report))
+        (protocols/tx-report-chan transactor))
+      component))
+  (stop [component]
+    component))
+
+(defn new-datsync-server []
+  (map->DatsyncServer {}))
 
 
