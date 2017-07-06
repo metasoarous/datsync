@@ -22,7 +22,7 @@
   "Public API function for returning the event chan of the remote; May remove ability to specify handler
   function via PRemoteSendEvent."
   [remote]
-  (protocols/remote-event-chan remote))
+  (protocols/recv-chan remote))
 
 (reactor/register-effect
   ::send-event!

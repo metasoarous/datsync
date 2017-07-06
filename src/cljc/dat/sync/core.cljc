@@ -1077,16 +1077,20 @@
 (defrecord Datsync [dispatcher remote]
   component/Lifecycle
   (start [component]
-    (let [remote-chan (remote/event-chan remote)]
       (log/info "Starting Datsync component")
       (dispatcher/dispatch! dispatcher [:dat.sync.client/merge-schema base-schema])
       ;; This should get triggered by successful connection to the websocket
       (log/info "Dispatched schema changes")
-      (go-loop []
-        (let [event (async/<! remote-chan)]
-          (dispatcher/dispatch! dispatcher event)
-          (recur)))
-      component))
+      (async/pipeline
+        1
+        (protocols/send-chan dispatcher)
+        ;; FIXME: conform to re-frame
+;;         (map (fn [ev] [:dat.remote.impl.sente/event (:event ev)]))
+        (map #(assoc %
+                :dat.reactor/event :dat.reactor/legacy
+                :dat.sync/event-source :dat.sync/remote))
+        (protocols/recv-chan remote))
+      component)
   (stop [component]
     component))
 
@@ -1097,18 +1101,16 @@
   component/Lifecycle
   (start [component]
     (let [] ;; ???: kill-chan
-      (log/info "Starting Datsync component")
-      ;; This should get triggered by successful connection to the websocket
-      (log/info "Dispatched schema changes")
+      (log/info "Starting Datsync Server component")
       (async/pipeline
         1
-        (protocols/dispatcher-event-chan dispatcher)
-;;         (map #(assoc % :dat.sync/event-source :dat.sync/remote))
-        (map #(assoc % :dat.reactor/event :dat.reactor/legacy))
-        (protocols/remote-event-chan remote))
+        (protocols/send-chan dispatcher)
+        (map #(assoc % :dat.reactor/event :dat.reactor/legacy
+                       :dat.sync/event-source :dat.sync/remote))
+        (protocols/recv-chan remote))
       (async/pipeline
         1
-        (protocols/dispatcher-event-chan dispatcher)
+        (protocols/send-chan dispatcher)
         (map #(assoc % :dat.sync/event-source :dat.sync/tx-report))
         (protocols/tx-report-chan transactor))
       component))

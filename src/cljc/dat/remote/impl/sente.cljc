@@ -4,7 +4,7 @@
                 :cljs [[cljs.core.async :as async]])
             [dat.sync.client :as sync]
             [dat.reactor :as reactor]
-            [dat.sync.utils :as utils]
+            [dat.sync.utils :as utils :refer [cat-into]]
             [dat.spec.protocols :as protocols]
             [com.stuartsierra.component :as component]
             [taoensso.timbre :as log #?@(:cljs [:include-macros true])]
@@ -24,61 +24,115 @@
       ;(defn tagged-fn [:datsync.server/db-fn])
       (cljs.reader/register-tag-parser! 'db/fn pr-str)))
 
+(defn recv-ev-msg->seg
+  "In exchange for this overhead we get send/recv using the same universal-namespaced-segment-maps."
+  [ev-msg]
+  (let [ev-id (:id ev-msg)
+        ev-data (:?data ev-msg)
+        ring-req (:ring-req ev-msg)
+        peer-id (:uid ev-msg)]
+    (log/info "recv-ev-msg->seg" ev-id)
+    (if (= ev-id ::segment)
+      ;; This is important for security implications. Putting the data into a plain map to make sure some weird object that stops overwrite can't be the base segment. Make sure we overwrite :dat.remote specific vars so a remote connection can't choose their own peer-id, session, etc.
+      (cat-into
+        {}
+        ev-data
+        {:dat.remote/ring-req ring-req
+         :dat.remote/peer-id peer-id})
+      ;; handles sente events themselves
+      (assoc ev-msg
+        :dat.reactor/event :dat.reactor/legacy ;; :dat.remote/sente
+        ))))
+
+(defn send-ev->seg
+  "Make sure all vector events are converted into universal-namespaced-segment-maps"
+  [ev]
+  (if (vector? ev)
+    {:dat.reactor/event :legacy
+     :event ev
+     :id (first ev)}
+    ev))
+
 (def default-sente-options
-  {:packer (sente-transit/get-transit-packer)})
+  {:chsk-route "/chsk"
+;;    :user-id-fn :client-id ;; !!!: replace with user authentication function. client-id is provided by sente for convenience, but we'll want something more robust. As is :uid is not set and we let sente send back to whomever sent the request
+   :wrap-recv-evs? false ;; helps with symmetry between client and server
+   :packer (sente-transit/get-transit-packer)})
 
-
-(defrecord SenteRemote [peers ch-recv event-chan send-fn open? sente-options
-                        ;; server specific:
-                        server? server-stop ring-handlers]
+(defrecord SenteRemote [sente-options send> recv> sente-sock stop-remote server?]
   component/Lifecycle
   (start [remote]
     (log/info "Starting SenteRemote Component")
-    (let [chsk-route (or (:chsk-route sente-options) "/chsk")
-          sente-options (merge default-sente-options (dissoc sente-options :chsk-route))
-          event-chan (or event-chan (async/chan 100))
-          {:as sente-fns :keys [ch-recv send-fn connected-uids
-                    ajax-post-fn ajax-get-or-ws-handshake-fn]}
-          (if server?
-            #?(:clj (sente/make-channel-socket! sente-http/http-kit-adapter sente-options)
-              :cljs (throw "Sente cannot run in server mode in cljs"))
-            (sente/make-channel-socket! chsk-route sente-options))
-          server-stop
-          (if server?
-            (sente/start-chsk-router! ch-recv (fn [event] (async/put! event-chan event)))
-            ;; Set Sente to pipe it's events such that they all (at the top level) fit the standard re-frame shape. ???: this should probably be reworked to use plain maps aka segments
-            (async/pipeline 1 event-chan (map (fn [x] [::event (:event x)])) ch-recv))]
+    (let [send> (or send> (async/chan 100))
+          recv> (or recv> (async/chan 100))
+          sente-options (merge default-sente-options sente-options)
+          sock-options (merge default-sente-options (dissoc sente-options :chsk-route))
+          {:as sente-sock :keys [ch-recv send-fn connected-uids ajax-post-fn ajax-get-or-ws-handshake-fn]}
+          (or sente-sock
+              (if server?
+                #?(:clj (sente/make-channel-socket! (sente-http/get-sch-adapter) sock-options)
+                   :cljs (throw "Sente cannot run in server mode in cljs"))
+                (sente/make-channel-socket! (:chsk-route sente-options) sock-options)))
+          stop-remote (or stop-remote
+                          (do
+                            (go-loop []
+                              (let [{:as seg :keys [:dat.remote/peer-id]} (send-ev->seg (async/<! send>))]
+                                ;; TODO: give send shared chan-control with recv
+                                ;; TODO: error handling
+                                ;;           (log/info "event to peer:" event)
+                                (if peer-id
+                                  (send-fn peer-id (dissoc seg :dat.remote/peer-id))
+                                  (if connected-uids
+                                    (doseq [uid (:any @connected-uids)]
+                                      (send-fn uid [::segment seg]))
+                                    (send-fn [::segment seg]))))
+                              (recur))
+                            (sente/start-chsk-router!
+                              ch-recv
+                              #(async/put! recv> (recv-ev-msg->seg %)))))]
       (assoc remote
-        :event-chan event-chan
-        :open? (atom false)
-        :peers connected-uids
-        :send-fn send-fn
-        :ch-recv ch-recv
-        :ring-handlers (when server? {:route chsk-route
-                                      :get ajax-get-or-ws-handshake-fn
-                                      :put ajax-post-fn}))))
+        :send> send>
+        :recv> recv>
+        :stop-remote stop-remote
+        :sente-sock sente-sock
+        :sente-options sente-options)))
   (stop [remote]
     (log/info "Stopping SenteRemote component")
     (try
-      ;(when event-chan (async/close! event-chan))
       ;(when ch-recv (async/close! ch-recv))
       (log/debug "SenteRemote stopped successfully")
-      (when server? (server-stop))
-      (assoc remote :ch-recv nil :event-chan nil)
+      (stop-remote)
+      (assoc remote
+        :send> nil
+        :recv> nil
+        :stop-remote nil
+        :sente-options nil
+        :sente-sock nil)
       (catch #?(:clj Exception :cljs :default) e
         (log/error "Error stopping SenteRemote:" e)
         remote)))
+  protocols/PKabel
+  (recv-chan [remote]
+    recv>)
+  (send-chan [remote]
+    send>)
+  protocols/PRingSock
+  (sock-route [remote]
+    (:chsk-route sente-options))
+  (sock-get [remote]
+    (:ajax-get-or-ws-handshake-fn sente-sock))
+  (sock-post [remote]
+    (:ajax-post-fn sente-sock))
   protocols/PRemoteSendEvent
-  (send-event! [{:as remote :keys [peers]} event]
-     ;; TODO: send to all peers when not a client
-     (if peers
-       (doseq [uid (:any @peers)] (protocols/send-event! remote uid event))
-       (send-fn event)))
+  (send-event! [remote event]
+    (log/info "remote send protocol")
+    (async/put! send> event))
   (send-event! [remote peer-id event]
-    (send-fn peer-id event))
+    ;; confirms segment before assoc
+    (async/put! send> (assoc (send-ev->seg event) :dat.remote/peer-id peer-id)))
   protocols/PRemoteEventChan
   (remote-event-chan [remote]
-    event-chan))
+    recv>))
 
 
 (defn new-sente-remote
@@ -153,5 +207,8 @@
     (log/info ":chsk/recv for event-id:" (first event))
     (reactor/resolve-to app db
       [event])))
+
+(defn ring-handlers [ws-connection]
+  (:ring-handlers ws-connection))
 
 
