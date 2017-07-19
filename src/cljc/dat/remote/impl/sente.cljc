@@ -31,7 +31,7 @@
         ev-data (:?data ev-msg)
         ring-req (:ring-req ev-msg)
         peer-id (:uid ev-msg)]
-    (log/info "recv-ev-msg->seg" ev-id)
+;;     (log/info "recv-ev-msg->seg" ev-id)
     (if (= ev-id ::segment)
       ;; This is important for security implications. Putting the data into a plain map to make sure some weird object that stops overwrite can't be the base segment. Make sure we overwrite :dat.remote specific vars so a remote connection can't choose their own peer-id, session, etc.
       (cat-into
@@ -47,8 +47,9 @@
 (defn send-ev->seg
   "Make sure all vector events are converted into universal-namespaced-segment-maps"
   [ev]
+  ;; FIXME: merge with datsync function of same purpose
   (if (vector? ev)
-    {:dat.reactor/event :legacy
+    {:dat.reactor/event :dat.reactor/legacy
      :event ev
      :id (first ev)}
     ev))
@@ -76,7 +77,7 @@
           stop-remote (or stop-remote
                           (do
                             (go-loop []
-                              (let [{:as seg :keys [:dat.remote/peer-id]} (send-ev->seg (async/<! send>))]
+                              (let [{:as seg :keys [dat.remote/peer-id]} (send-ev->seg (async/<! send>))]
                                 ;; TODO: give send shared chan-control with recv
                                 ;; TODO: error handling
                                 ;;           (log/info "event to peer:" event)
@@ -111,12 +112,12 @@
       (catch #?(:clj Exception :cljs :default) e
         (log/error "Error stopping SenteRemote:" e)
         remote)))
-  protocols/PKabel
+  protocols/Wire
   (recv-chan [remote]
     recv>)
   (send-chan [remote]
     send>)
-  protocols/PRingSock
+  protocols/RingSock
   (sock-route [remote]
     (:chsk-route sente-options))
   (sock-get [remote]
@@ -125,7 +126,6 @@
     (:ajax-post-fn sente-sock))
   protocols/PRemoteSendEvent
   (send-event! [remote event]
-    (log/info "remote send protocol")
     (async/put! send> event))
   (send-event! [remote peer-id event]
     ;; confirms segment before assoc
@@ -189,13 +189,15 @@
       (catch #?(:clj Exception :cljs :default) e
         (log/error "Exception handling :chsk/state:" e)))))
 
-(reactor/register-handler :chsk/ws-ping
-  (fn [& args] true))
+(reactor/register-handler
+  :chsk/ws-ping
+  (fn [app db _]
+    db))
 
 (reactor/register-handler
   :chsk/handshake
   (fn [app db [_ {:as ev-msg :keys [?data]}]]
-    (log/warn "Calling :chsk/handshare! You should probably write something here! (reactor/register-handler :chsk/handshake (fn [app db [_ hs-msg]] ...))")
+;;     (log/warn "Calling :chsk/handshake! You should probably write something here! (reactor/register-handler :chsk/handshake (fn [app db [_ hs-msg]] ...))")
     db))
 
 (reactor/register-handler
