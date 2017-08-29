@@ -56,7 +56,7 @@
 
 (def default-sente-options
   {:chsk-route "/chsk"
-;;    :user-id-fn :client-id ;; !!!: replace with user authentication function. client-id is provided by sente for convenience, but we'll want something more robust. As is :uid is not set and we let sente send back to whomever sent the request
+   :user-id-fn :client-id ;; !!!: replace with user authentication function. client-id is provided by sente for convenience, but we'll want something more robust.
    :wrap-recv-evs? false ;; helps with symmetry between client and server
    :packer (sente-transit/get-transit-packer)})
 
@@ -80,17 +80,21 @@
                               (let [{:as seg :keys [dat.remote/peer-id]} (send-ev->seg (async/<! send>))]
                                 ;; TODO: give send shared chan-control with recv
                                 ;; TODO: error handling
-                                ;;           (log/info "event to peer:" event)
-                                (if peer-id
-                                  (send-fn peer-id (dissoc seg :dat.remote/peer-id))
+                                (log/info "send event to peer:" (:dat.reactor/event seg) (:id seg))
+;;                                 (if peer-id
+                                ;; TODO: fix uid function. Until then always broadcast.
+;;                                   (send-fn peer-id [::segment (dissoc seg :dat.remote/peer-id)])
                                   (if connected-uids
                                     (doseq [uid (:any @connected-uids)]
                                       (send-fn uid [::segment seg]))
-                                    (send-fn [::segment seg]))))
+                                    (send-fn [::segment seg])))
+;;                                      )
                               (recur))
                             (sente/start-chsk-router!
                               ch-recv
-                              #(async/put! recv> (recv-ev-msg->seg %)))))]
+                              #(let [seg (recv-ev-msg->seg %)]
+;;                                  (log/info "recv event from peer:" (:dat.reactor/event seg) (:id seg))
+                                 (async/put! recv> seg)))))]
       (assoc remote
         :send> send>
         :recv> recv>

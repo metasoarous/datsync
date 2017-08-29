@@ -1,72 +1,158 @@
 (ns dat.sync.core
   "# Datsync client API"
   #?(:cljs (:require-macros [cljs.core.async.macros :as async-macros :refer [go go-loop]]))
-  (:require #?@(:clj [[clojure.core.async :as async :refer [go go-loop]]]
-                :cljs [[cljs.core.async :as async]])
+  (:require [clojure.core.async :as async
+             :refer [>! <! #?@(:clj [go go-loop])]]
             [dat.remote :as remote]
             [datascript.db]
             [dat.reactor :as reactor]
+            [dat.reactor.onyx :as oreactor]
             [dat.reactor.dispatcher :as dispatcher]
-            [dat.sync.utils :as utils :refer [cat-into deref-or-value]]
             [datascript.core :as ds]
             [dat.spec.protocols :as protocols]
             #?(:clj [datomic.api :as dapi])
             [com.stuartsierra.component :as component]
+            [dat.spec.utils :refer [deep-merge cat-into deref-or-value]]
             [taoensso.timbre :as log #?@(:cljs [:include-macros true])]))
+
+;; TODO: 8hrs get figwheel loading onyx compiled fns
+;; TODO: 8hrs tx-cycle protection
+;; TODO: 12hrs dirty peer
+;; TODO: 8hrs persistent datascript replacement
+;; TODO: 8hrs race condition debugging (async delay
+;; TODO: 40hrs ios compatability
+;; TODO: 40hrs datview onyx integration
+;; TODO: 4hrs refactor/clean
+;; TODO: 4hrs debug slf4j logging
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; UNIFIED - treating server and client as peers
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defn gen-uuid []
   (ds/squuid))
 
 (defn globalize-uuident [db eid]
-  (::uuident (ds/entity db eid)))
+  (:dat.sync/uuident (ds/entity db eid)))
+
+(defn globalize-uuident2 [{:keys [entity]} db eid]
+  (:dat.sync/uuident (entity db eid)))
 
 (defn localize-uuident [db euuid]
-  (ds/entity db [::uuident euuid]))
+  [:dat.sync/uuident euuid])
 
-(comment
-  (def testtt (ds/create-conn {::uuident {:db/unique :db.unique/identity}
-                             :other-thing {:db/valueType :db.type/ref}}))
-  )
+(defn localize-uuident2 [{:keys [entity]} db euuid]
+  [:dat.sync/uuident euuid])
+
+(defn datom->tx [[e a v t add?]]
+  [(if add? :db/add :db/retract) e a v t])
 
 (defn datom><tx []
-  (map
-    (fn [[e a v t ?add]]
-      [(if ?add :db/add :db/retract) e a v t]
-      )))
+  (map datom->tx))
+
+(defn ref? [{:keys [q]} db attr]
+  (or (#{:db/cardinality :db/valueType :db/unique} attr) ;; so we know base-schema are refs before the base-schema is transacted into the db. ???: maybe have base-schema tied to a built in uuident we know at compile time? maybe have schema datoms fully integrated one datom at a time?
+      ;; ***!!! I need to take each :db/ident entity and turn it into map tx form
+      (q
+        '[:find ?attr .
+          :in $ ?ident
+          :where
+          [?attr :db/ident ?ident]
+          [?attr :db/valueType ?enum]
+          [?enum :db/ident :db.type/ref]]
+        db attr)))
+
+(defn many? [{:keys [q]} db attr]
+  (q
+    '[:find ?attr .
+      :in $ ?ident
+      :where
+       [?attr :db/ident ?ident]
+       [?attr :db/cardinality ?enum]
+       [?enum :db/ident :db.cardinality/many]]
+    db attr))
 
 (defn datoms-identer [{:as local-db :keys [schema]} uuident]
+  ;; ???: should be using rschema here or attrs-by?
   (map
-    (fn [[e a v t ?add]]
-      (let [?many (= :db.cardinality/many (get-in schema [a :db/cardinality]))
-            ?ref (= :db.type/ref (get-in schema [a :db/valueType]))]
+    (fn [[e a v t add?]]
+      (let [many? (= :db.cardinality/many (get-in schema [a :db/cardinality]))
+            ref? (= :db.type/ref (get-in schema [a :db/valueType]))]
         [(uuident local-db e)
          a
-         (if-not ?ref
+         (if-not ref?
            v
-           (if (and ?many (coll? v))
+           (if (and many? (coll? v))
              (map (partial uuident local-db) v)
              (uuident local-db v)))
          t
-         ?add]))))
+         add?]))))
+
+(defn datom-identer2 [{:as api :keys [db conn]} uuident]
+  (let [db-snap (db conn)] ;; !!!: for efficiency. may cause race conditions if used without care.
+    (fn [[e a v t add?]]
+      [(uuident api db-snap e)
+       a
+       (if-not (ref? api db-snap a)
+         v
+         (if (and (many? api db-snap a) (coll? v))
+           (map (partial uuident api db-snap) v)
+           (uuident api db-snap v)))
+       t
+       add?])))
+
+(defn datom-identer3 [api db uuident]
+  (fn [[e a v t add?]]
+    [(uuident api db e)
+     a
+     (if-not (ref? api db a)
+       v
+       (if (and (many? api db a) (coll? v)) ;; ???: overkill? in datom for no coll as v i think
+         (map (partial uuident api db) v)
+         (uuident api db v)))
+     t
+     add?]))
+
+(defn datom-attr-resolver2 [{:keys [db conn entity]}]
+  (let [db-snap (db conn)]
+    (fn [[e a v t add?]]
+      [e
+       (if (keyword? a)
+         a
+         (:db/ident (entity db-snap a)))
+       v
+       t
+       add?])))
+
 
 (defn datom><gdatom [db-or-conn]
   (datoms-identer (deref-or-value db-or-conn) globalize-uuident))
 
+(defn datom><gdatom2 [datom-api]
+  (comp
+    (map (datom-attr-resolver2 datom-api))
+    (map (datom-identer2 datom-api globalize-uuident2))))
+
 (defn gdatom><datom [db-or-conn]
   (datoms-identer (deref-or-value db-or-conn) localize-uuident))
+
+(defn gdatom><datom2 [datom-api]
+  (map (datom-identer2 datom-api localize-uuident2)))
+
+(defn gdatom><datom3 [datom-api db]
+  (map (datom-identer3 datom-api db localize-uuident2)))
 
 (defn datom><tx-uuidents []
   (comp
     (filter (fn [[_ a _ _ _]]
-              (= a ::uuident)))
-    (map (fn [[e a v t ?add]]
+              (= a :dat.sync/uuident)))
+    (filter (fn [[e _ v _ _]]
+              (= e v)))
+    (map (fn [[e a v t add?]]
            {;;???: :db/id #db/id[:db.part/user]
-            ::uuident v}))))
+            :dat.sync/uuident v}))))
 
-(defn middle-with [db tx-data {:as tx-meta :keys [:datascript.db/tx-middleware]}]
+(defn middle-with [db tx-data {:as tx-meta :keys [datascript.db/tx-middleware]}]
   {:pre [(datascript.db/db? db)]}
   ;; ???: skipping filtered db check
   ((if tx-middleware (tx-middleware datascript.db/transact-tx-data) datascript.db/transact-tx-data)
@@ -75,9 +161,21 @@
       :db-after  db
       :tx-data   []
       :tempids   {}
-      :tx-meta   tx-meta}) tx-data))
+      :tx-meta   tx-meta})
+   tx-data))
 
-(defn uuident-middleware [transact]
+#?(:clj
+(defn uuident-all-the-things* [db]
+  (comp
+    (map (fn [[eid _ _ _ _]] eid))
+    (distinct)
+    (remove #(:dat.sync/uuident (dapi/entity db %)))
+    (map (fn [eid]
+           [:db/add eid :dat.sync/uuident (gen-uuid)])))))
+
+(defn uuident-all-the-things
+  "tx-middleware to add uuidents to any fresh entity that didn't get one assigned during the transaction."
+  [transact]
   (fn [report txs]
     (let [{:as report :keys [db-after tx-data]} (transact report txs)]
       (log/debug "middling")
@@ -88,10 +186,33 @@
           (comp
             (map (fn [[eid _ _ _ _]] eid))
             (distinct)
-            (remove #(::uuident (ds/entity db-after %)))
+            (remove #(:dat.sync/uuident (ds/entity db-after %)))
             (map (fn [eid]
-                   [:db/add eid ::uuident (gen-uuid)])))
+                   [:db/add eid :dat.sync/uuident (gen-uuid)])))
           tx-data)))))
+
+;; (defn ^:export localize-uuidents
+;;   "uuidents are handled differently than regular transactions so they can be assigned a local eid if needed. if there already existed a local eid for that uuident datascript will do nothing because uuident is unique"
+;;   [{:keys [datoms]}]
+;;   {:txs
+;;    (map
+;;      (fn [[e a v t add?]]
+;;        (if add?
+;;          {:dat.sync/uuident v}
+;;          [:db/retract e a] ;; FIXME: check syntax
+;;          ))
+;;      datoms)})
+
+(defn tx-gdatoms [db gdatoms]
+  (sequence
+    (comp
+      (gdatom><datom db)
+      (datom><tx))
+    gdatoms))
+
+(defn ^:export hmmm-localize-txs [{:keys [datoms]}]
+  {:txs
+   [[:db.fn/call tx-gdatoms datoms]]})
 
 ;; (defn txs><gdatoms [conn]
 ;;   (comp
@@ -100,36 +221,168 @@
 ;;         (middle-with
 ;;           @conn
 ;;           txs
-;;           (assoc (meta txs) :datascript.db/tx-middleware uuident-middleware))))
+;;           (assoc (meta txs) :datascript.db/tx-middleware uuident-all-the-things))))
 ;;     (map #(into [] (datom><gdatom conn) %))))
 
-(defn ^:export snap-transact [{:keys [txs :dat.sync/db-snap]}]
+(defn ^:export snap-transact [{:keys [txs dat.sync/db-snap]}]
   (assoc
     (middle-with
       db-snap
       txs
-      (assoc (meta txs) :datascript.db/tx-middleware uuident-middleware))
+      (assoc (meta txs)
+        :datascript.db/tx-middleware uuident-all-the-things))
     :dat.sync/event :dat.sync/tx-report))
 
 (defn ^:export tx-report->gdatoms [{:as seg :keys [tx-data db-after]}]
   {:dat.sync/event :dat.sync/gdatoms
    :datoms (into [] (datom><gdatom db-after) tx-data)})
 
-(defn ^:export gdatoms->local-txs [{:keys [datoms :dat.sync/db-snap]}]
-  {:dat.sync/event :dat.sync/local-txs
-   :txs
-   (into
-     (into
-       []
-       (datom><tx-uuidents)
-       datoms)
-     (comp
-       (remove
-         (fn [[_ a _ _ _]]
-           (= a ::uuident)))
-       (gdatom><datom db-snap)
-       (datom><tx))
-     datoms)})
+;; (defn ^:export gdatoms->local-txs [{:as seg :keys [datomses dat.sync/db-snap]}]
+;;   ;; ***???: convert to middleware. how does this work in datomic?
+;;   ;; FIXME: :e/category not resolved to ident just a naked uuid because schema not updated yet
+;;   (into seg
+;;   {:dat.sync/event :dat.sync/local-txs
+;;    :txs
+;;    (into
+;;      (into
+;;        []
+;;        (datom><tx-uuidents)
+;;        datoms) ;; ???: use partition probably, rather than into twice
+;;      (comp
+;;        (remove (fn [[e _ _ _ _]] (nil? e))) ;; ???: why is there nils in here?
+;;        (remove
+;;          (fn [[_ a _ _ _]]
+;;            (= a :dat.sync/uuident)))
+;;        (gdatom><datom db-snap) ;; ***FIXME: db-snap needs to be post uuident installation or maybe from the transaction itself? how would this work in datomic?
+;;        (datom><tx))
+;;      datoms)}))
+
+(defn ^:export gdatoms->local-ds-txs [{:as seg :keys [datoms datomses]}]
+  (for [datoms (or datomses [datoms])]
+    (into seg
+      {:dat.sync/event :dat.sync/local-txs
+       :txs
+       [[:db.fn/call
+       #(into
+         (into
+           []
+           (datom><tx-uuidents)
+           datoms) ;; ???: use partition probably, rather than into twice
+         (comp
+           (remove (fn [[e _ _ _ _]] (nil? e))) ;; ???: why is there nils in here?
+           (remove
+             (fn [[e a v _ _]]
+               (and (= a :dat.sync/uuident)
+                    (= e v))))
+           (gdatom><datom3 {:entity ds/entity
+                            :q ds/q} %)
+           (datom><tx))
+         datoms)]]})))
+
+(def schema-uuident-query
+  '[:find [?attr-uuid ...]
+    :where
+    [?attr-eid :db/ident]
+    [?attr-eid :dat.sync/uuident ?attr-uuid]])
+
+(def schema-map-query
+  '[:find ?attr (pull ?attr-eid [*])
+    :where
+    [?attr-eid :db/ident ?attr]])
+
+(def schema-eid-query
+  '[:find [?attr-eid ...]
+    :where
+    [?attr-eid :db/ident ?attr-ident]])
+
+(defn replace-schema
+  [db schema]
+  (ds/init-db (ds/datoms db :eavt) schema))
+
+(def global-schema
+  {:dat.sync/uuident {:db/ident :dat.sync/uuident
+;;                      :db/valueType :db.type/uuid
+                     :db/unique :db.unique/identity}})
+
+(def schema-schema
+  ;; TODO: :db/doc (maybe others) shouldn't really be considered a schema trait. It has no effect on schema capabilities.
+  ;; TODO: add tools for accreting schema like attr aliasing, attr deprecation, etc.
+  ;; TODO: handle differences in values allowed for :db/valueType and the like which datascript does not support. (maybe warn instead of error)
+  {:db/ident {:db/ident :db/ident
+;;               :db/valueType :db.type/keyword
+              :db/unique :db.unique/identity}
+   :db/cardinality {:db/ident :db/cardinality
+                    :db/valueType :db.type/ref ;; enum
+                    }
+   :db/unique {:db/ident :db/unique
+               :db/valueType :db.type/ref ;; enum
+               }
+   :db/valueType {:db/ident :db/valueType
+                  :db/valueType :db.type/ref ;; enum
+                  }
+   :db/doc {:db/ident :db/doc
+;;             :db/valueType :db.type/string
+            }
+   :db/index {:db/ident :db/index
+;;               :db/valueType :db.type/boolean
+              }
+   :db/fulltext {:db/ident :db/fulltext
+;;                  :db/valueType :db.type/boolean
+                 }
+   :db/isComponent {:db/ident :db/isComponent
+;;                  :db/valueType :db.type/boolean
+                    }
+   :db/noHistory {:db/ident :db/noHistory
+;;                  :db/valueType :db.type/boolean
+                  }})
+
+(defn test-schema-middleware []
+  (let [conn (ds/create-conn)]
+    (ds/transact!
+      conn
+      [{:db/ident :test
+        :db/cardinality :db.cardinality/many}]
+      {:datascript.db/tx-middleware datascript.db/schema-middleware})
+    (ds/transact!
+      conn
+      [{:db/id -1
+        :test :a}
+       {:db/id -1
+        :test :b}])
+    @conn))
+
+;;
+;; ## Dataflow predicates
+;;
+(defn ^:export transaction?
+  [event old-seg seg all-new]
+  (contains? seg :txs))
+
+(defn ^:export localize?
+  [event old-seg seg all-new]
+  ;; TODO: decide which segments get sent to server
+  ;; TODO: handle all peers not just server
+  (= (:dat.reactor/event seg) :dat.sync/gdatoms))
+
+(defn ^:export legacy?
+  [event old-seg seg all-new]
+  (= (:dat.reactor/event seg) :dat.reactor/legacy))
+
+(defn ^:export snapshot?
+  [event old-seg seg all-new]
+  (= (:dat.reactor/event seg) :dat.sync/snapshot))
+
+(defn ^:export request-snapshot?
+  [event old-seg seg all-new]
+  (= (:dat.reactor/event seg) :dat.sync/request-snapshot))
+
+(defn ^:export source-from-transactor?
+[event old-seg seg all-new]
+  (= (:dat.reactor/input seg) :dat.sync/tx-report))
+
+(defn ^:export source-from-remote?
+[event old-seg seg all-new]
+  (= (:dat.reactor/input seg) :dat.sync/remote))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; SERVER - from server.clj
@@ -295,24 +548,17 @@
 
 ;;
 
-(defn legacy-event->seg [event]
-  (if (vector? event)
-    {:dat.reactor/event :dat.reactor/legacy
-     :event event}
-    event))
-
-(defn legacy-event><seg []
-  (map legacy-event->seg))
 
 (def filter-tx-deltas identity)
 
 (defn ^:export handle-legacy-tx-report [tx-report]
   (try
     (let [tx-deltas (filter-tx-deltas (tx-report-deltas tx-report))]
-      (legacy-event->seg [:dat.sync.client/recv-remote-tx tx-deltas]))
+      (oreactor/legacy-event->seg [:dat.sync.client/recv-remote-tx tx-deltas]))
     (catch #?(:clj Exception :cljs :default) e
       (log/error "Failed to send transaction report to clients!")
-      (.printStackTrace e))))
+      #?(:clj (.printStackTrace e)
+         :cljs (.-stack e)))))
 
 #?(:clj
 (defn go-tx-report! [datomic-report-queue tx-chan]
@@ -532,12 +778,6 @@
   (if (seq? fns)
     (apply comp (map #(partial % db) fns))
     identity))
-
-(defn replace-schema
-  [db schema]
-  ;; Should probably write this in terms of ds/init-db, directly passing in the datoms; probably much more
-  ;; efficient. But right now just want to get this working...
-  (ds/init-db (ds/datoms db :eavt) schema))
 
 ;; deprecating...
 (defn -transact-with-middleware!
@@ -776,7 +1016,7 @@
   ;; Don't have to worry about triggering listeners here as much
   (swap! conn
          (fn [{:as db :keys [schema]}]
-           (replace-schema db (utils/deep-merge schema schema-spec)))))
+           (replace-schema db (deep-merge schema schema-spec)))))
 
 (defn datom-tx-form
   [datom]
@@ -1012,7 +1252,7 @@
     ;; Have to make sure schema with changes and replace schema don't need the :ident
     ;; Would be nice to log idents
     (log/info "Applying schema changes!")
-    (let [new-schema (utils/deep-merge (:schema db) schema)
+    (let [new-schema (deep-merge (:schema db) schema)
           new-db (replace-schema db new-schema)]
       new-db)))
 
@@ -1070,6 +1310,130 @@
         [[:dat.sync.client/recv-remote-tx tx-data]]))))
 
 
+(defmulti event-msg-handler
+  ; Dispatch on event-id
+  (fn [app {:as event-msg :keys [id]}] id))
+
+;; ## Event handlers
+
+;; don't really need this... should delete
+(defmethod event-msg-handler :chsk/ws-ping
+  [_ _]
+;;   (log/debug "Ping")
+  )
+
+;; Setting up our two main dat.sync hooks
+
+;; General purpose transaction handler
+(defmethod event-msg-handler :dat.sync.remote/tx
+  [{:as app :keys [datom-api]} {:as event-msg :keys [id ?data]}]
+  (log/info "tx recieved from client: " id)
+  (let [tx-report @(apply-remote-tx! (:conn datom-api) ?data)]
+    (println "Do something with:" tx-report)))
+
+
+(defn uuident-datom? [[_ a _ _ _]]
+  (= a :dat.sync/uuident))
+
+(defn datom->has-ident? [{:keys [entity]} db]
+  (fn [[e _ _ _ _]]
+    (:db/ident (entity db [:dat.sync/uuident e]))))
+
+(defn snapshot [{:as app :keys [transactor datom-api]}
+                {:as event-msg :keys [dat.remote/peer-id]}]
+  (log/info "Sending bootstrap message" peer-id)
+  (let [db ((:db datom-api) (:conn datom-api))
+        entity (:entity datom-api)
+        snap (protocols/snapshot transactor)
+        has-ident? (datom->has-ident? datom-api db)
+        datoms (into
+                 []
+                 (datom><gdatom2 datom-api)
+                 snap)
+        uuidents (filter #(uuident-datom? %) datoms)
+        ident-datoms (filter has-ident? datoms)
+        core-schema-datoms (filter (fn [[_ a _ _ _]] (#{:db/cardinality :db/valueType :db/unique :db/ident} a)) ident-datoms) ;; swap order w ident-datoms for more efficient algo
+        other-schema-datoms (remove (fn [[_ a _ _ _]] (#{:db/cardinality :db/valueType :db/unique :db/ident} a)) ident-datoms)
+;;         schema-datoms (filter datascript.db/schema-datom? datoms)
+        other-datoms (remove #(or ;;(datascript.db/schema-datom? %)
+                                  (uuident-datom? %)
+                                  (has-ident? %))
+                             datoms)
+;;         {:keys [uuidents schema-datoms other-datoms]}
+;;         (group-by
+;;           #(cond
+;;               :uuidents
+;;              (datascript.db/schema-datom? %) :schema-datoms
+;;              :else :other-datoms)
+;;           datoms)
+        ;; ???: preserver some sort of datom order for datascript sake?
+        ]
+    (log/debug "cardinalities"
+               (into
+                 []
+                 (comp
+                   (filter
+                     (fn [[_ a _ _ _]]
+                       (= :db/cardinality a)))
+                     (map (fn [[e _ v _ _]]
+                            [(:db/ident (entity db [:dat.sync/uuident e]))
+                             (:db/ident (entity db [:dat.sync/uuident v]))])))
+               ident-datoms))
+    ;; ***TODO: schema datoms don't include enums. need enums to run first.
+    ;; ???: snapshot gives sequence. what's the right way to handle this. where should batching occur?
+;;     (log/debug "SNAP!!!"(vec (take 10 snap)))
+;;     (log/debug "->" (vec (take 10 datoms)))
+    (let [seg {:dat.remote/peer-id peer-id
+               :dat.reactor/event :dat.sync/snapshot
+               :datomses [uuidents core-schema-datoms other-schema-datoms other-datoms]
+               }]
+;;       (log/debug "snap-seg" seg)
+      seg
+        )))[:test
+            []]
+
+#?(:clj
+;; We handle the bootstrap message by simply sending back the bootstrap data
+(defmethod event-msg-handler :dat.sync.client/bootstrap
+  ;; What is send-fn here? Does that wrap the uid for us? (0.o)
+  [{:as app :keys [transactor remote datom-api]} {:as event-msg :keys [dat.remote/peer-id]}]
+  (async/put!
+    (protocols/send-chan remote)
+    (snapshot app event-msg))))
+
+;; Fallback handler; should send message saying I don't know what you mean
+(defmethod event-msg-handler :default ; Fallback
+  [app {:as event-msg :keys [event id ?data ring-req ?reply-fn send-fn]}]
+  (log/warn "Unhandled event:" id))
+
+(defn legacy-server-segment! [app seg]
+  (event-msg-handler app seg))
+
+;; (defn ^:export legacy-localize-txs [{:keys [txs]}]
+;;   (let [normalized-tx (normalize-tx txs)
+;;         translated-tx (translate-eids db normalized-tx)
+;;         schema-changes (tx-schema-changes db translated-tx)
+;;         remote-tx-meta {:dat.sync.prov/agent :dat.sync/remote}
+;;         ]
+;; ;;     (reactor/resolve-to app db
+;; ;;                         [(when (seq schema-changes) [:dat.sync.client/apply-schema-changes schema-changes])
+;;     ;; TODO: make a schema changes wire
+;;   [{:dat.reactor/event :dat.reactor/legacy
+;;     :event [:dat.sync.client/apply-schema-changes schema-changes]
+;;     :id schema-changes}
+;;   {:dat.reactor/event :dat.sync/local-tx
+;;    :txs (with-meta translated-tx remote-tx-meta)}]))
+
+(defn ^:export could-update-schema [seg]
+  (let [seg (update-in seg
+                       [:tx-meta :datascript.db/tx-middleware]
+                       #(comp datascript.db/schema-middleware (or % identity)))]
+    seg))
+
+(defn transact-segment! [transactor {:as seg :keys [txs tx-meta]}]
+;;   (log/info "transacting" seg)
+  (protocols/transact! transactor txs tx-meta)
+  (log/info "db-after" @(:conn transactor)))
 
 ;; This is just a little glue; A system component that plugs in to pipe messages from the remote to the
 ;; dispatch chan
@@ -1078,7 +1442,7 @@
   component/Lifecycle
   (start [component]
       (log/info "Starting Datsync component")
-      (dispatcher/dispatch! dispatcher [:dat.sync.client/merge-schema base-schema])
+;;       (dispatcher/dispatch! dispatcher [:dat.sync.client/merge-schema base-schema])
       ;; This should get triggered by successful connection to the websocket
       (log/info "Dispatched schema changes")
       (async/pipeline
@@ -1097,11 +1461,112 @@
 (defn new-datsync []
   (map->Datsync {}))
 
-(defrecord DatsyncClient [dispatcher remote]
+(defrecord DatsyncClient [dispatcher remote reactor transactor datom-api conn]
   component/Lifecycle
   (start [component]
+    (let [component (assoc component :conn (or conn (:conn datom-api))) ;; FIXME: handlers should get the conn from db themselves
+          onyx-batch-size 20]
       (log/info "Starting Datsync component")
-      (dispatcher/dispatch! dispatcher [:dat.sync.client/merge-schema base-schema])
+;;       (dispatcher/dispatch! dispatcher [:dat.sync.client/merge-schema base-schema])
+         (oreactor/expand-job!
+        reactor
+        ::job
+        {:catalog
+           [{:onyx/type :output
+             :onyx/name :dat.reactor/legacy
+             :dat.reactor/chan (oreactor/handler-chan!
+                                 component
+                                oreactor/legacy-segment!) ;; ???: idempotent
+             :onyx/batch-size onyx-batch-size}
+            {:onyx/type :input
+             :onyx/batch-size onyx-batch-size
+             :dat.reactor/chan (protocols/recv-chan dispatcher)
+             :onyx/name :dat.view.dom/event}
+            {:onyx/type :output
+             :onyx/batch-size onyx-batch-size
+             :dat.reactor/chan (protocols/send-chan dispatcher)
+             :onyx/name :dat.view.dom/render}
+            {:onyx/type :input
+             :onyx/batch-size onyx-batch-size
+             :dat.reactor/chan (protocols/recv-chan remote)
+             :onyx/name :dat.remote/recv}
+            {:onyx/type :output
+             :onyx/batch-size onyx-batch-size
+             :dat.reactor/chan (protocols/send-chan remote)
+             :onyx/name :dat.remote/send}
+;;            FIXME: looping txes {:onyx/type :input
+;;              :onyx/batch-size onyx-batch-size
+;;              :dat.reactor/chan (protocols/recv-chan transactor)
+;;              :onyx/name :dat.sync/tx-report}
+            {:onyx/type :output
+             :onyx/batch-size onyx-batch-size
+             :dat.reactor/chan (oreactor/handler-chan! transactor transact-segment!) ;;(protocols/send-chan transactor)
+             :onyx/name :dat.sync/transact}
+            {:onyx/type :function
+             :onyx/name :dat.sync/localize
+             :onyx/fn ::gdatoms->local-ds-txs
+             :onyx/batch-size onyx-batch-size}
+             {:onyx/type :function
+              :onyx/name ::could-update-schema
+              :onyx/fn ::could-update-schema
+              :onyx/batch-size onyx-batch-size}
+;;             {:onyx/type :function
+;;              :onyx/name :dat.sync/legacy-localize-txs
+;;              :onyx/fn ::legacy-localize-txs
+;;              :onyx/batch-size onyx-batch-size}
+            {:onyx/type :function
+             :onyx/name :dat.sync/snap-transact
+             :onyx/fn ::snap-transact
+             :onyx/batch-size onyx-batch-size}
+            {:onyx/type :function
+             :onyx/name :dat.sync/globalize
+             :onyx/fn ::tx-report->gdatoms
+             :onyx/batch-size onyx-batch-size}
+            {:onyx/type :function
+             :onyx/name :dat.sync/handle-legacy-tx-report
+             :onyx/fn ::handle-legacy-tx-report
+             :onyx/batch-size onyx-batch-size}
+             ]
+         :workflow
+           [
+            [:dat.view.dom/event :dat.reactor/legacy]
+            [:dat.remote/recv :dat.reactor/legacy]
+            [:dat.remote/recv :dat.sync/localize] [:dat.sync/localize :dat.sync/transact]
+             [:dat.remote/recv ::could-update-schema] [::could-update-schema :dat.sync/localize]
+;;             FIXME: stop tx looping [:dat.sync/tx-report :dat.sync/handle-legacy-tx-report] [:dat.sync/handle-legacy-tx-report :dat.remote/send]
+            [:dat.view.dom/event :dat.sync/snap-transact] [:dat.sync/snap-transact :dat.sync/globalize] [:dat.sync/globalize :dat.remote/send]
+;;              [:dat.remote/recv :dat.sync/legacy-localize-txs]
+;;              [:dat.sync/legacy-localize-txs :dat.reactor/legacy]
+;;              [:dat.sync/legacy-localize-txs :dat.sync/transact]
+;;              [:dat.remote/recv :dat.reactor/log]
+            ]
+           :flow-conditions
+           [{:flow/from :dat.view.dom/event
+             :flow/to [:dat.sync/snap-transact]
+             :flow/predicate ::source-from-transactor?}
+            {:flow/from :dat.remote/recv
+             :flow/to [::could-update-schema]
+             :flow/predicate ::snapshot?}
+;;             {:flow/from :dat.remote/recv
+;;              :flow/to [:dat.sync/legacy-localize-txs :dat.reactor/log]
+;;              :flow/predicate ::snapshot?}
+;;             {:flow/from :dat.sync/legacy-localize-txs
+;;              :flow/to [:dat.reactor/legacy]
+;;              :flow/predicate ::legacy?}
+;;             {:flow/from :dat.sync/legacy-localize-txs
+;;              :flow/to [:dat.sync/transact]
+;;              :flow/predicate ::transaction?}
+            {:flow/from :dat.remote/recv
+             :flow/to [:dat.sync/localize]
+             :flow/predicate ::localize?}
+            {:flow/from :dat.view.dom/event
+             :flow/to [:dat.reactor/legacy]
+             :flow/predicate ::legacy?}
+            {:flow/from :dat.remote/recv
+             :flow/to [:dat.reactor/legacy]
+             :flow/predicate ::legacy?}
+            ]
+         })
       ;; This should get triggered by successful connection to the websocket
 ;;       (log/info "Dispatched schema changes")
 ;;       (async/pipeline
@@ -1113,34 +1578,156 @@
 ;;                 :dat.reactor/event :dat.reactor/legacy
 ;;                 :dat.sync/event-source :dat.sync/remote))
 ;;         (protocols/recv-chan remote))
-      component)
+      component))
   (stop [component]
-    component))
+    (assoc component :conn nil)))
 
 (defn new-datsync-client []
   (map->DatsyncClient {}))
 
-(defrecord DatsyncServer [dispatcher remote transactor datomic]
+(defrecord DatsyncServer [dispatcher remote transactor datom-api reactor]
   component/Lifecycle
   (start [component]
-    (let [] ;; ???: kill-chan
+    (let [onyx-batch-size 20] ;; ???: kill-chan
       (log/info "Starting Datsync Server component")
-;;       (async/pipeline
-;;         1
-;;         (protocols/send-chan dispatcher)
-;;         (map #(assoc % :dat.reactor/event :dat.reactor/legacy
-;;                        :dat.sync/event-source :dat.sync/remote))
-;;         (protocols/recv-chan remote))
-;;       (async/pipeline
-;;         1
-;;         (protocols/send-chan dispatcher)
-;;         (map #(assoc % :dat.sync/event-source :dat.sync/tx-report))
-;;         (protocols/tx-report-chan transactor))
+
+      (oreactor/expand-job!
+        reactor
+        ::job
+        {:catalog
+           [{:onyx/type :output
+             :onyx/name :dat.reactor/legacy
+             :dat.reactor/chan (oreactor/handler-chan!
+                                 component
+                                legacy-server-segment!) ;; ???: idempotent
+             :onyx/batch-size onyx-batch-size}
+
+            {:onyx/type :input
+             :onyx/batch-size onyx-batch-size
+             :dat.reactor/chan (protocols/recv-chan dispatcher)
+             :onyx/name :dat.view.dom/event}
+;;             {:onyx/type :output
+;;              :onyx/batch-size onyx-batch-size
+;;              :dat.reactor/chan (protocols/send-chan dispatcher)
+;;              :onyx/name :dat.view.dom/render}
+            {:onyx/type :input
+             :onyx/batch-size onyx-batch-size
+             :dat.reactor/chan (protocols/recv-chan remote)
+             :onyx/name :dat.remote/recv}
+            {:onyx/type :output
+             :onyx/batch-size onyx-batch-size
+             :dat.reactor/chan (protocols/send-chan remote)
+             :onyx/name :dat.remote/send}
+            {:onyx/type :input
+             :onyx/batch-size onyx-batch-size
+             :dat.reactor/chan (protocols/recv-chan transactor)
+             :onyx/name :dat.sync/tx-report}
+            {:onyx/type :output
+             :onyx/batch-size onyx-batch-size
+             :dat.reactor/chan (oreactor/handler-chan! transactor transact-segment!) ;; not implemented: (protocols/send-chan transactor)
+             :onyx/name :dat.sync/transact}
+            {:onyx/type :function
+             :onyx/name :dat.sync/localize
+             :onyx/fn ::gdatoms->local-ds-txs
+             :onyx/batch-size onyx-batch-size}
+            {:onyx/type :function
+             :onyx/name :dat.sync/snap-transact
+             :onyx/fn ::snap-transact
+             :onyx/batch-size onyx-batch-size}
+            {:onyx/type :function
+             :onyx/name :dat.sync/globalize
+             :onyx/fn ::tx-report->gdatoms
+             :onyx/batch-size onyx-batch-size}
+            {:onyx/type :function
+             :onyx/name :dat.sync/handle-legacy-tx-report
+             :onyx/fn ::handle-legacy-tx-report
+             :onyx/batch-size onyx-batch-size}
+            {:onyx/type :function
+             :onyx/name ::snapshot
+             :onyx/fn ::snapshot
+             :onyx/batch-size onyx-batch-size}
+             ]
+           :workflow
+           [
+            [:dat.view.dom/event :dat.reactor/legacy]
+            [:dat.remote/recv :dat.reactor/legacy]
+            [:dat.remote/recv ::snapshot] [::snapshot :dat.remote/send]
+            [:dat.remote/recv :dat.sync/localize] [:dat.sync/localize :dat.sync/transact]
+            [:dat.sync/tx-report :dat.sync/handle-legacy-tx-report] [:dat.sync/handle-legacy-tx-report :dat.remote/send]
+            [:dat.view.dom/event :dat.sync/snap-transact] [:dat.sync/snap-transact :dat.sync/globalize] [:dat.sync/globalize :dat.remote/send]
+            ]
+           :flow-conditions
+           [{:flow/from :dat.remote/recv
+             :flow/to [::snapshot]
+             :flow/predicate ::request-snapshot?}
+            {:flow/from :dat.view.dom/event
+             :flow/to [:dat.sync/snap-transact]
+             :flow/predicate ::source-from-transactor?}
+            {:flow/from :dat.remote/recv
+             :flow/to [:dat.sync/localize]
+             :flow/predicate ::localize?}
+            {:flow/from :dat.view.dom/event
+             :flow/to [:dat.reactor/legacy]
+             :flow/predicate ::legacy?}
+            {:flow/from :dat.remote/recv
+             :flow/to [:dat.reactor/legacy]
+             :flow/predicate ::legacy?}]
+           })
       component))
   (stop [component]
     component))
 
 (defn new-datsync-server []
   (map->DatsyncServer {}))
+
+;; RACE_CONDITON:
+;; ???: need blocking async in clojure?
+;; Exception in thread "async-dispatch-4" java.lang.RuntimeException: java.lang.Exception: Not supported: class clojure.lang.Delay
+;; 	at com.cognitect.transit.impl.WriterFactory$1.write(WriterFactory.java:60)
+;; 	at cognitect.transit$write.invokeStatic(transit.clj:149)
+;; 	at cognitect.transit$write.invoke(transit.clj:146)
+;; 	at taoensso.sente.packers.transit$fn__38621$fn__38622$fn__38623$fn__38624.invoke(transit.cljc:58)
+;; 	at taoensso.sente.packers.transit.TransitPacker.pack(transit.cljc:94)
+;; 	at taoensso.sente$pack.invokeStatic(sente.cljc:223)
+;; 	at taoensso.sente$pack.invoke(sente.cljc:219)
+;; 	at taoensso.sente$make_channel_socket_server_BANG_$send_fn__36632$flush_buffer_BANG___36639.invoke(sente.cljc:437)
+;; 	at taoensso.sente$make_channel_socket_server_BANG_$send_fn__36632$fn__36983$state_machine__9551__auto____37050$fn__37052.invoke(sente.cljc:491)
+;; 	at taoensso.sente$make_channel_socket_server_BANG_$send_fn__36632$fn__36983$state_machine__9551__auto____37050.invoke(sente.cljc:489)
+;; 	at clojure.core.async.impl.ioc_macros$run_state_machine.invokeStatic(ioc_macros.clj:973)
+;; 	at clojure.core.async.impl.ioc_macros$run_state_machine.invoke(ioc_macros.clj:972)
+;; 	at clojure.core.async.impl.ioc_macros$run_state_machine_wrapped.invokeStatic(ioc_macros.clj:977)
+;; 	at clojure.core.async.impl.ioc_macros$run_state_machine_wrapped.invoke(ioc_macros.clj:975)
+;; 	at clojure.core.async.impl.ioc_macros$take_BANG_$fn__9569.invoke(ioc_macros.clj:986)
+;; 	at clojure.core.async.impl.channels.ManyToManyChannel$fn__4501.invoke(channels.clj:265)
+;; 	at clojure.lang.AFn.run(AFn.java:22)
+;; 	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1142)
+;; 	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:617)
+;; 	at java.lang.Thread.run(Thread.java:748)
+;; Caused by: java.lang.Exception: Not supported: class clojure.lang.Delay
+;; 	at com.cognitect.transit.impl.AbstractEmitter.marshal(AbstractEmitter.java:176)
+;; 	at com.cognitect.transit.impl.JsonEmitter.emitMap(JsonEmitter.java:158)
+;; 	at com.cognitect.transit.impl.AbstractEmitter.emitMap(AbstractEmitter.java:70)
+;; 	at com.cognitect.transit.impl.AbstractEmitter.marshal(AbstractEmitter.java:166)
+;; 	at com.cognitect.transit.impl.AbstractEmitter.emitArray(AbstractEmitter.java:82)
+;; 	at com.cognitect.transit.impl.AbstractEmitter.marshal(AbstractEmitter.java:164)
+;; 	at com.cognitect.transit.impl.AbstractEmitter.emitArray(AbstractEmitter.java:87)
+;; 	at com.cognitect.transit.impl.AbstractEmitter.marshal(AbstractEmitter.java:164)
+;; 	at com.cognitect.transit.impl.AbstractEmitter.emitTagged(AbstractEmitter.java:34)
+;; 	at com.cognitect.transit.impl.AbstractEmitter.emitEncoded(AbstractEmitter.java:59)
+;; 	at com.cognitect.transit.impl.AbstractEmitter.marshal(AbstractEmitter.java:169)
+;; 	at com.cognitect.transit.impl.AbstractEmitter.emitArray(AbstractEmitter.java:82)
+;; 	at com.cognitect.transit.impl.AbstractEmitter.marshal(AbstractEmitter.java:164)
+;; 	at com.cognitect.transit.impl.JsonEmitter.emitMap(JsonEmitter.java:158)
+;; 	at com.cognitect.transit.impl.AbstractEmitter.emitMap(AbstractEmitter.java:70)
+;; 	at com.cognitect.transit.impl.AbstractEmitter.marshal(AbstractEmitter.java:166)
+;; 	at com.cognitect.transit.impl.AbstractEmitter.emitArray(AbstractEmitter.java:82)
+;; 	at com.cognitect.transit.impl.AbstractEmitter.marshal(AbstractEmitter.java:164)
+;; 	at com.cognitect.transit.impl.AbstractEmitter.emitArray(AbstractEmitter.java:82)
+;; 	at com.cognitect.transit.impl.AbstractEmitter.marshal(AbstractEmitter.java:164)
+;; 	at com.cognitect.transit.impl.AbstractEmitter.marshalTop(AbstractEmitter.java:193)
+;; 	at com.cognitect.transit.impl.JsonEmitter.emit(JsonEmitter.java:28)
+;; 	at com.cognitect.transit.impl.WriterFactory$1.write(WriterFactory.java:57)
+;; 	... 19 more
+
 
 
