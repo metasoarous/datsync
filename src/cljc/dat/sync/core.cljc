@@ -24,6 +24,40 @@
 ;; TODO: 40hrs datview onyx integration
 ;; TODO: 4hrs refactor/clean
 ;; TODO: 4hrs debug slf4j logging
+;; ???: macro to register db function that works in both datascript and datomic. Also passes the api.
+;; ???: make transaction fn calls compatible between datascript datomic
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Knowledge Base API
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; ???: are these still usefull?
+(defn pull [{:as kb :keys [api db]} pull-expr eid]
+  ((:pull api) db pull-expr eid))
+
+(defn pull-many [{:as kb :keys [api db]} pull-expr eids]
+  ((:pull-many api) db pull-expr eids))
+
+(defn q [q-expr {:as kb :keys [api db]} & inputs]
+  ;; ???: check :in for extra dbs and rulesets
+  (apply (:q api) q-expr db inputs))
+
+(defn entity [{:as kb :keys [api db]} eid]
+  ((:entity api) db eid))
+
+(defn with [{:as kb :keys [api db]} txs]
+  ((:with api) db txs))
+
+(defn transact! [{:as kb :keys [api conn]} txs]
+  ((:transact! api) conn txs))
+
+;; (defn listen! [{:as kb :keys [api]} & args]
+;;   ;; ???: protocol instead
+;;   (apply (:listen! api) args))
+
+;; (defn filter* [{:as kb :keys [api db]} & args]
+;;   ;; TODO: change to name filter, fix clash with clojure.core
+;;   (apply (:filter api) db args))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; UNIFIED - treating server and client as peers
@@ -32,14 +66,28 @@
 (defn gen-uuid []
   (ds/squuid))
 
-(defn globalize-uuident [db eid]
-  (:dat.sync/uuident (ds/entity db eid)))
+(defn uuident-datom? [[_ a _ _ _]]
+  (= a :dat.sync/uuident))
+
+(defn identity-gdatom? [[[ident-attr _] attr _ _ _]]
+  (= ident-attr attr))
+
+;; (defn globalize-uuident [db eid]
+;;   (:dat.sync/uuident (ds/entity db eid)))
 
 (defn globalize-uuident2 [{:keys [entity]} db eid]
   (:dat.sync/uuident (entity db eid)))
 
-(defn localize-uuident [db euuid]
-  [:dat.sync/uuident euuid])
+(defn globalize-uuident3 [{:keys [entity]} db eid]
+  (let [it (entity db eid)
+        dbident (:db/ident it)]
+    ;; TODO: support for all kinds of idents
+    (if dbident
+      [:db/ident dbident]
+      [:dat.sync/uuident (:dat.sync/uuident it)])))
+
+;; (defn localize-uuident [db euuid]
+;;   [:dat.sync/uuident euuid])
 
 (defn localize-uuident2 [{:keys [entity]} db euuid]
   [:dat.sync/uuident euuid])
@@ -50,56 +98,56 @@
 (defn datom><tx []
   (map datom->tx))
 
-(defn ref? [{:keys [q]} db attr]
-  (or (#{:db/cardinality :db/valueType :db/unique} attr) ;; so we know base-schema are refs before the base-schema is transacted into the db. ???: maybe have base-schema tied to a built in uuident we know at compile time? maybe have schema datoms fully integrated one datom at a time?
-      ;; ***!!! I need to take each :db/ident entity and turn it into map tx form
+(defn ref? [{:keys [q]} db attr-ident]
+  (or (#{:db/cardinality :db/valueType :db/unique} attr-ident) ;; so we know base-schema are refs before the base-schema is transacted into the db.
+      ;;???: maybe have base-schema tied to a built in uuident we know at compile time (slower)? maybe have schema datoms fully integrated one datom at a time?
       (q
         '[:find ?attr .
           :in $ ?ident
           :where
           [?attr :db/ident ?ident]
-          [?attr :db/valueType ?enum]
-          [?enum :db/ident :db.type/ref]]
-        db attr)))
+          [?attr :db/valueType ?ref-enum]
+          [?ref-enum :db/ident :db.type/ref]]
+        db attr-ident)))
 
-(defn many? [{:keys [q]} db attr]
+(defn many? [{:keys [q]} db attr-ident]
   (q
     '[:find ?attr .
       :in $ ?ident
       :where
        [?attr :db/ident ?ident]
-       [?attr :db/cardinality ?enum]
-       [?enum :db/ident :db.cardinality/many]]
-    db attr))
+       [?attr :db/cardinality ?many-enum]
+       [?many-enum :db/ident :db.cardinality/many]]
+    db attr-ident))
 
-(defn datoms-identer [{:as local-db :keys [schema]} uuident]
-  ;; ???: should be using rschema here or attrs-by?
-  (map
-    (fn [[e a v t add?]]
-      (let [many? (= :db.cardinality/many (get-in schema [a :db/cardinality]))
-            ref? (= :db.type/ref (get-in schema [a :db/valueType]))]
-        [(uuident local-db e)
-         a
-         (if-not ref?
-           v
-           (if (and many? (coll? v))
-             (map (partial uuident local-db) v)
-             (uuident local-db v)))
-         t
-         add?]))))
+;; (defn datoms-identer [{:as local-db :keys [schema]} uuident]
+;;   ;; ???: should be using rschema here or attrs-by?
+;;   (map
+;;     (fn [[e a v t add?]]
+;;       (let [many? (= :db.cardinality/many (get-in schema [a :db/cardinality]))
+;;             ref? (= :db.type/ref (get-in schema [a :db/valueType]))]
+;;         [(uuident local-db e)
+;;          a
+;;          (if-not ref?
+;;            v
+;;            (if (and many? (coll? v))
+;;              (map (partial uuident local-db) v)
+;;              (uuident local-db v)))
+;;          t
+;;          add?]))))
 
-(defn datom-identer2 [{:as api :keys [db conn]} uuident]
-  (let [db-snap (db conn)] ;; !!!: for efficiency. may cause race conditions if used without care.
-    (fn [[e a v t add?]]
-      [(uuident api db-snap e)
-       a
-       (if-not (ref? api db-snap a)
-         v
-         (if (and (many? api db-snap a) (coll? v))
-           (map (partial uuident api db-snap) v)
-           (uuident api db-snap v)))
-       t
-       add?])))
+;; (defn datom-identer2 [{:as api :keys [db conn]} uuident]
+;;   (let [db-snap (db conn)] ;; !!!: for efficiency. may cause race conditions if used without care.
+;;     (fn [[e a v t add?]]
+;;       [(uuident api db-snap e)
+;;        a
+;;        (if-not (ref? api db-snap a)
+;;          v
+;;          (if (and (many? api db-snap a) (coll? v))
+;;            (map (partial uuident api db-snap) v)
+;;            (uuident api db-snap v)))
+;;        t
+;;        add?])))
 
 (defn datom-identer3 [api db uuident]
   (fn [[e a v t add?]]
@@ -113,31 +161,40 @@
      t
      add?]))
 
-(defn datom-attr-resolver2 [{:keys [db conn entity]}]
-  (let [db-snap (db conn)]
-    (fn [[e a v t add?]]
-      [e
-       (if (keyword? a)
-         a
-         (:db/ident (entity db-snap a)))
-       v
-       t
-       add?])))
+(defn datom-attr-resolver3 [{:keys [entity]} db]
+  (fn [[e a v t add?]]
+    [e
+     (if (keyword? a)
+       a
+       (:db/ident (entity db a)))
+     v
+     t
+     add?]))
 
+;; (defn datom><gdatom [db-or-conn]
+;;   (datoms-identer (deref-or-value db-or-conn) globalize-uuident))
 
-(defn datom><gdatom [db-or-conn]
-  (datoms-identer (deref-or-value db-or-conn) globalize-uuident))
+;; (defn datom><gdatom2 [datom-api]
+;;   (comp
+;;     (map (datom-attr-resolver2 datom-api))
+;;     (map (datom-identer2 datom-api globalize-uuident2))))
 
-(defn datom><gdatom2 [datom-api]
+(defn datom><gdatom3 [datom-api db]
   (comp
-    (map (datom-attr-resolver2 datom-api))
-    (map (datom-identer2 datom-api globalize-uuident2))))
+    (map (datom-attr-resolver3 datom-api db))
+    (map (datom-identer3 datom-api db globalize-uuident2))))
 
-(defn gdatom><datom [db-or-conn]
-  (datoms-identer (deref-or-value db-or-conn) localize-uuident))
+(defn datom><gdatom4 [datom-api db]
+  (comp
+    (map (datom-attr-resolver3 datom-api db))
+    (map (datom-identer3 datom-api db globalize-uuident3))))
 
-(defn gdatom><datom2 [datom-api]
-  (map (datom-identer2 datom-api localize-uuident2)))
+
+;; (defn gdatom><datom [db-or-conn]
+;;   (datoms-identer (deref-or-value db-or-conn) localize-uuident))
+
+;; (defn gdatom><datom2 [datom-api]
+;;   (map (datom-identer2 datom-api localize-uuident2)))
 
 (defn gdatom><datom3 [datom-api db]
   (map (datom-identer3 datom-api db localize-uuident2)))
@@ -152,6 +209,13 @@
            {;;???: :db/id #db/id[:db.part/user]
             :dat.sync/uuident v}))))
 
+(defn datom><tx-uuidents2 []
+  (comp
+    (filter identity-gdatom?)
+    (map (fn [[[ident-attr ident-value] a v t add?]]
+           {;;???: :db/id #db/id[:db.part/user]
+            ident-attr ident-value}))))
+
 (defn middle-with [db tx-data {:as tx-meta :keys [datascript.db/tx-middleware]}]
   {:pre [(datascript.db/db? db)]}
   ;; ???: skipping filtered db check
@@ -164,14 +228,18 @@
       :tx-meta   tx-meta})
    tx-data))
 
+
+
 #?(:clj
 (defn uuident-all-the-things* [db]
   (comp
     (map (fn [[eid _ _ _ _]] eid))
     (distinct)
-    (remove #(:dat.sync/uuident (dapi/entity db %)))
-    (map (fn [eid]
-           [:db/add eid :dat.sync/uuident (gen-uuid)])))))
+    (map (partial dapi/entity db))
+    (remove :db/ident)
+    (remove :dat.sync/uuident)
+    (map (fn [{:keys [db/id]}]
+           [:db/add id :dat.sync/uuident (gen-uuid)])))))
 
 (defn uuident-all-the-things
   "tx-middleware to add uuidents to any fresh entity that didn't get one assigned during the transaction."
@@ -191,39 +259,6 @@
                    [:db/add eid :dat.sync/uuident (gen-uuid)])))
           tx-data)))))
 
-;; (defn ^:export localize-uuidents
-;;   "uuidents are handled differently than regular transactions so they can be assigned a local eid if needed. if there already existed a local eid for that uuident datascript will do nothing because uuident is unique"
-;;   [{:keys [datoms]}]
-;;   {:txs
-;;    (map
-;;      (fn [[e a v t add?]]
-;;        (if add?
-;;          {:dat.sync/uuident v}
-;;          [:db/retract e a] ;; FIXME: check syntax
-;;          ))
-;;      datoms)})
-
-(defn tx-gdatoms [db gdatoms]
-  (sequence
-    (comp
-      (gdatom><datom db)
-      (datom><tx))
-    gdatoms))
-
-(defn ^:export hmmm-localize-txs [{:keys [datoms]}]
-  {:txs
-   [[:db.fn/call tx-gdatoms datoms]]})
-
-;; (defn txs><gdatoms [conn]
-;;   (comp
-;;     (map
-;;       (fn [txs]
-;;         (middle-with
-;;           @conn
-;;           txs
-;;           (assoc (meta txs) :datascript.db/tx-middleware uuident-all-the-things))))
-;;     (map #(into [] (datom><gdatom conn) %))))
-
 (defn ^:export snap-transact [{:keys [txs dat.sync/db-snap]}]
   (assoc
     (middle-with
@@ -233,29 +268,28 @@
         :datascript.db/tx-middleware uuident-all-the-things))
     :dat.sync/event :dat.sync/tx-report))
 
-(defn ^:export tx-report->gdatoms [{:as seg :keys [tx-data db-after]}]
+(defn ^:export tx-report->gdatoms [api {:as seg :keys [tx-data db-after]}]
   {:dat.sync/event :dat.sync/gdatoms
-   :datoms (into [] (datom><gdatom db-after) tx-data)})
+   :datoms (into [] (datom><gdatom4 api db-after) tx-data)})
 
-;; (defn ^:export gdatoms->local-txs [{:as seg :keys [datomses dat.sync/db-snap]}]
-;;   ;; ***???: convert to middleware. how does this work in datomic?
-;;   ;; FIXME: :e/category not resolved to ident just a naked uuid because schema not updated yet
-;;   (into seg
-;;   {:dat.sync/event :dat.sync/local-txs
-;;    :txs
-;;    (into
-;;      (into
-;;        []
-;;        (datom><tx-uuidents)
-;;        datoms) ;; ???: use partition probably, rather than into twice
-;;      (comp
-;;        (remove (fn [[e _ _ _ _]] (nil? e))) ;; ???: why is there nils in here?
-;;        (remove
-;;          (fn [[_ a _ _ _]]
-;;            (= a :dat.sync/uuident)))
-;;        (gdatom><datom db-snap) ;; ***FIXME: db-snap needs to be post uuident installation or maybe from the transaction itself? how would this work in datomic?
-;;        (datom><tx))
-;;      datoms)}))
+(defn hmmm-uuidents [db datoms]
+  (let [[uuidatoms otherdatoms] (split-with identity-gdatom? datoms)]
+    (into
+      (map
+        (fn [[_ _ uuident _ _]]
+          {:db/id #db/id [:db.part/user]
+           :dat.sync/uuident uuident})
+        uuidatoms)
+      (comp
+           (remove (fn [[[_ ident-value] _ _ _ _]] (nil? ident-value))) ;; ???: why is there nils in here?
+           (remove
+             (fn [[e a v _ _]]
+               (and (= a :dat.sync/uuident)
+                    (= e v))))
+;;            (gdatom><datom3 {:entity ds/entity
+;;                             :q ds/q} %)
+           (datom><tx))
+      otherdatoms)))
 
 (defn ^:export gdatoms->local-ds-txs [{:as seg :keys [datoms datomses]}]
   (for [datoms (or datomses [datoms])]
@@ -266,16 +300,17 @@
        #(into
          (into
            []
-           (datom><tx-uuidents)
+           (datom><tx-uuidents2)
            datoms) ;; ???: use partition probably, rather than into twice
          (comp
-           (remove (fn [[e _ _ _ _]] (nil? e))) ;; ???: why is there nils in here?
-           (remove
-             (fn [[e a v _ _]]
-               (and (= a :dat.sync/uuident)
-                    (= e v))))
-           (gdatom><datom3 {:entity ds/entity
-                            :q ds/q} %)
+           (remove (fn [[[_ ident-value] _ _ _ _]] (nil? ident-value))) ;; ???: why is there nils in here?
+           (remove identity-gdatom?)
+;;            (remove
+;;              (fn [[e a v _ _]]
+;;                (and (= a :dat.sync/uuident)
+;;                     (= e v))))
+;;            (gdatom><datom3 {:entity ds/entity
+;;                             :q ds/q} %)
            (datom><tx))
          datoms)]]})))
 
@@ -1332,12 +1367,13 @@
     (println "Do something with:" tx-report)))
 
 
-(defn uuident-datom? [[_ a _ _ _]]
-  (= a :dat.sync/uuident))
+;; (defn datom->has-ident? [{:keys [entity]} db]
+;;   (fn [[e _ _ _ _]]
+;;     (:db/ident (entity db [:dat.sync/uuident e]))))
 
-(defn datom->has-ident? [{:keys [entity]} db]
+(defn datom->has-ident2? [{:keys [entity]} db]
   (fn [[e _ _ _ _]]
-    (:db/ident (entity db [:dat.sync/uuident e]))))
+    (:db/ident (entity db e))))
 
 (defn snapshot [{:as app :keys [transactor datom-api]}
                 {:as event-msg :keys [dat.remote/peer-id]}]
@@ -1345,18 +1381,18 @@
   (let [db ((:db datom-api) (:conn datom-api))
         entity (:entity datom-api)
         snap (protocols/snapshot transactor)
-        has-ident? (datom->has-ident? datom-api db)
+        has-ident? (datom->has-ident2? datom-api db)
         datoms (into
                  []
-                 (datom><gdatom2 datom-api)
+                 (datom><gdatom4 datom-api db)
                  snap)
-        uuidents (filter #(uuident-datom? %) datoms)
+        uuidents (filter identity-gdatom? datoms)
         ident-datoms (filter has-ident? datoms)
         core-schema-datoms (filter (fn [[_ a _ _ _]] (#{:db/cardinality :db/valueType :db/unique :db/ident} a)) ident-datoms) ;; swap order w ident-datoms for more efficient algo
         other-schema-datoms (remove (fn [[_ a _ _ _]] (#{:db/cardinality :db/valueType :db/unique :db/ident} a)) ident-datoms)
 ;;         schema-datoms (filter datascript.db/schema-datom? datoms)
         other-datoms (remove #(or ;;(datascript.db/schema-datom? %)
-                                  (uuident-datom? %)
+                                  (identity-gdatom? %)
                                   (has-ident? %))
                              datoms)
 ;;         {:keys [uuidents schema-datoms other-datoms]}
@@ -1366,20 +1402,21 @@
 ;;              (datascript.db/schema-datom? %) :schema-datoms
 ;;              :else :other-datoms)
 ;;           datoms)
-        ;; ???: preserver some sort of datom order for datascript sake?
+        ;; ???: preserve some sort of datom order for datascript sake?
         ]
-    (log/debug "cardinalities"
-               (into
-                 []
-                 (comp
-                   (filter
-                     (fn [[_ a _ _ _]]
-                       (= :db/cardinality a)))
-                     (map (fn [[e _ v _ _]]
-                            [(:db/ident (entity db [:dat.sync/uuident e]))
-                             (:db/ident (entity db [:dat.sync/uuident v]))])))
-               ident-datoms))
-    ;; ***TODO: schema datoms don't include enums. need enums to run first.
+;;     (log/debug "nil-id-datoms:" (into [] (filter (fn [[[_ iv] _ _ _ _]]
+;;                                                     (nil? iv))) datoms))
+;;     (log/debug "cardinalities"
+;;                (into
+;;                  []
+;;                  (comp
+;;                    (filter
+;;                      (fn [[_ a _ _ _]]
+;;                        (= :db/cardinality a)))
+;;                      (map (fn [[e _ v _ _]]
+;;                             [(:db/ident (entity db e))
+;;                              (:db/ident (entity db v))])))
+;;                ident-datoms))
     ;; ???: snapshot gives sequence. what's the right way to handle this. where should batching occur?
 ;;     (log/debug "SNAP!!!"(vec (take 10 snap)))
 ;;     (log/debug "->" (vec (take 10 datoms)))
@@ -1433,7 +1470,8 @@
 (defn transact-segment! [transactor {:as seg :keys [txs tx-meta]}]
 ;;   (log/info "transacting" seg)
   (protocols/transact! transactor txs tx-meta)
-  (log/info "db-after" @(:conn transactor)))
+  (log/info "db-after" @(:conn transactor))
+  )
 
 ;; This is just a little glue; A system component that plugs in to pipe messages from the remote to the
 ;; dispatch chan
@@ -1461,6 +1499,20 @@
 (defn new-datsync []
   (map->Datsync {}))
 
+
+(def onyx-batch-size 20)
+
+(def base-catalog
+  [{:onyx/type :function
+    :onyx/name :dat.sync/snap-transact
+    :onyx/fn ::snap-transact
+    :onyx/batch-size onyx-batch-size}
+   {:onyx/type :function
+    :onyx/name ::snapshot
+    :onyx/fn ::snapshot
+    :onyx/batch-size onyx-batch-size}
+    ])
+
 (defrecord DatsyncClient [dispatcher remote reactor transactor datom-api conn]
   component/Lifecycle
   (start [component]
@@ -1468,6 +1520,10 @@
           onyx-batch-size 20]
       (log/info "Starting Datsync component")
 ;;       (dispatcher/dispatch! dispatcher [:dat.sync.client/merge-schema base-schema])
+      (oreactor/expand-job!
+        reactor
+        ::base-job
+        {:catalog base-catalog})
          (oreactor/expand-job!
         reactor
         ::job
@@ -1515,17 +1571,11 @@
 ;;              :onyx/fn ::legacy-localize-txs
 ;;              :onyx/batch-size onyx-batch-size}
             {:onyx/type :function
-             :onyx/name :dat.sync/snap-transact
-             :onyx/fn ::snap-transact
-             :onyx/batch-size onyx-batch-size}
-            {:onyx/type :function
              :onyx/name :dat.sync/globalize
              :onyx/fn ::tx-report->gdatoms
-             :onyx/batch-size onyx-batch-size}
-            {:onyx/type :function
-             :onyx/name :dat.sync/handle-legacy-tx-report
-             :onyx/fn ::handle-legacy-tx-report
-             :onyx/batch-size onyx-batch-size}
+             :onyx/batch-size onyx-batch-size
+             ::api datom-api
+             :onyx/params [::api]}
              ]
          :workflow
            [
@@ -1588,9 +1638,12 @@
 (defrecord DatsyncServer [dispatcher remote transactor datom-api reactor]
   component/Lifecycle
   (start [component]
-    (let [onyx-batch-size 20] ;; ???: kill-chan
+    (let [] ;; ???: kill-chan
       (log/info "Starting Datsync Server component")
-
+      (oreactor/expand-job!
+        reactor
+        ::base-job
+        {:catalog base-catalog})
       (oreactor/expand-job!
         reactor
         ::job
@@ -1631,20 +1684,14 @@
              :onyx/fn ::gdatoms->local-ds-txs
              :onyx/batch-size onyx-batch-size}
             {:onyx/type :function
-             :onyx/name :dat.sync/snap-transact
-             :onyx/fn ::snap-transact
-             :onyx/batch-size onyx-batch-size}
-            {:onyx/type :function
              :onyx/name :dat.sync/globalize
              :onyx/fn ::tx-report->gdatoms
-             :onyx/batch-size onyx-batch-size}
+             :onyx/batch-size onyx-batch-size
+             ::api datom-api
+             :onyx/params [::api]}
             {:onyx/type :function
              :onyx/name :dat.sync/handle-legacy-tx-report
              :onyx/fn ::handle-legacy-tx-report
-             :onyx/batch-size onyx-batch-size}
-            {:onyx/type :function
-             :onyx/name ::snapshot
-             :onyx/fn ::snapshot
              :onyx/batch-size onyx-batch-size}
              ]
            :workflow
@@ -1681,6 +1728,7 @@
   (map->DatsyncServer {}))
 
 ;; RACE_CONDITON:
+;; This seems to occur on the server mostly when you start the client in the middle of the server start cycle
 ;; ???: need blocking async in clojure?
 ;; Exception in thread "async-dispatch-4" java.lang.RuntimeException: java.lang.Exception: Not supported: class clojure.lang.Delay
 ;; 	at com.cognitect.transit.impl.WriterFactory$1.write(WriterFactory.java:60)
