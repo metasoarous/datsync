@@ -82,7 +82,9 @@
   [:dat.sync/uuident euuid])
 
 (defn datom->tx [[e a v tx add?]]
-  [(if add? :db/add :db/retract) e a v tx])
+  ;; FIXME: ignoring tx for now
+  [(if add? :db/add :db/retract) e a v ;;tx
+   ])
 
 (defn datom><tx []
   (map datom->tx))
@@ -110,7 +112,7 @@
     db attr-ident))
 
 (defn datom-identer [api db uuident]
-  (fn [[e a v t add?]]
+  (fn [[e a v tx add?]]
     [(uuident api db e)
      a
      (if-not (ref? api db a)
@@ -119,17 +121,17 @@
          (map (partial uuident api db) v)
          (uuident api db v)))
      ;; FIXME: I don't think this is resolving properly on the datascript side. It's also probably not the best way to store things anyways. Maybe tx and eid should be stored as plain uuids???
-     t;;(uuident api db t)
+     tx;;(uuident api db tx)
      add?]))
 
 (defn datom-attr-resolver [{:keys [entity]} db]
-  (fn [[e a v t add?]]
+  (fn [[e a v tx add?]]
     [e
      (if (keyword? a)
        a
        (:db/ident (entity db a)))
      v
-     t
+     tx
      add?]))
 
 (defn datom><gdatom [datom-api db]
@@ -143,12 +145,14 @@
 (defn gdatom><datom-deprecated [datom-api db]
   (map (datom-identer datom-api db localize-uuident-deprecated)))
 
+(defn assign-ident [[[ident-attr ident-value] a v tx add?]]
+  {;;???: :db/id #db/id[:db.part/user]
+   ident-attr ident-value})
+
 (defn datom><tx-idents []
   (comp
     (filter identity-gdatom?)
-    (map (fn [[[ident-attr ident-value] a v t add?]]
-           {;;???: :db/id #db/id[:db.part/user]
-            ident-attr ident-value}))))
+    (map assign-ident)))
 
 (defn middle-with [db tx-data {:as tx-meta :keys [datascript.db/tx-middleware]}]
   {:pre [(datascript.db/db? db)]}
@@ -213,24 +217,27 @@
   {:dat.reactor/event :dat.sync/gdatoms
    :datoms gdatoms}))
 
+(defn- weird-nil-ident? [[[_ ident-value] _ _ _ _]]
+  ;; FIXME: why are there nils in some of the datoms? (maybe just one at this point)
+  (nil? ident-value))
+
+(defn gdatoms->local-txs [gdatoms]
+  (into
+    []
+    (comp
+      (remove weird-nil-ident?)
+      (map #(if (identity-gdatom? %)
+              (assign-ident %)
+              (datom->tx %))))
+    gdatoms))
+
 (defn ^:export gdatoms->local-ds-txs [{:as seg :keys [datoms datomses]}]
-  ;; ***TODO: need a datomic version of this
+  ;; ***???: need a datomic version of this
   ;; ???: do we need a universal db function?
   (for [datoms (or datomses [datoms])]
     (into seg
       {:dat.reactor/event :dat.sync/local-txs
-       :txs
-       [[:db.fn/call
-       #(into
-         (into
-           []
-           (datom><tx-idents)
-           datoms) ;; ???: use partition probably, rather than into twice
-         (comp
-           (remove (fn [[[_ ident-value] _ _ _ _]] (nil? ident-value))) ;; ???: why is there nils in here?
-           (remove identity-gdatom?)
-           (datom><tx))
-         datoms)]]})))
+       :txs (gdatoms->local-txs datoms)})))
 
 (def schema-uuident-query
   '[:find [?attr-uuid ...]
@@ -441,7 +448,6 @@
 
 
 ;; ***TODO: recv-remote-tx onyx style
-;; ***TODO: send-remote-tx onyx style
 ;; ***TODO: connected onyx style
 
 (reactor/register-handler
@@ -486,7 +492,7 @@
 (defn transact-segment! [transactor {:as seg :keys [txs tx-meta]}]
 ;;   (log/info "transacting" seg)
   (protocols/transact! transactor txs tx-meta)
-  (log/info "db-after" @(:conn transactor))
+;;   (log/info "db-after" @(:conn transactor))
   )
 
 ;; This is just a little glue; A system component that plugs in to pipe messages from the remote to the
@@ -723,8 +729,10 @@
             [:dat.remote/recv ::snapshot] [::snapshot :dat.remote/send]
             [:dat.remote/recv :dat.sync/localize] [:dat.sync/localize :dat.sync/transact]
 ;;             [:dat.sync/tx-report :dat.sync/handle-legacy-tx-report] [:dat.sync/handle-legacy-tx-report :dat.remote/send]
-            [:dat.sync/tx-report :dat.remote/send] ;; ***FIXME:
-            [:dat.view.dom/event :dat.sync/snap-transact] [:dat.sync/snap-transact :dat.sync/globalize] [:dat.sync/globalize :dat.remote/send]
+            [:dat.sync/tx-report :dat.sync/globalize]
+;;             [:dat.sync/globalize :dat.remote/send] ;; ***FIXME: process tx-report
+;;             [:dat.view.dom/event :dat.sync/snap-transact] [:dat.sync/snap-transact :dat.sync/globalize]
+            [:dat.sync/globalize :dat.remote/send]
             ]
            :flow-conditions
            [{:flow/from :dat.remote/recv
