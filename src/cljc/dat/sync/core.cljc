@@ -28,38 +28,6 @@
 ;; ???: make transaction fn calls compatible between datascript datomic
 ;; ???: add tools to datascript for accreting schema like attr aliasing, attr deprecation, etc. (closer to full ident support)
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Knowledge Base API
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;; ???: are these still usefull?
-(defn pull [{:as kb :keys [api db]} pull-expr eid]
-  ((:pull api) db pull-expr eid))
-
-(defn pull-many [{:as kb :keys [api db]} pull-expr eids]
-  ((:pull-many api) db pull-expr eids))
-
-(defn q [q-expr {:as kb :keys [api db]} & inputs]
-  ;; ???: check :in for extra dbs and rulesets
-  (apply (:q api) q-expr db inputs))
-
-(defn entity [{:as kb :keys [api db]} eid]
-  ((:entity api) db eid))
-
-(defn with [{:as kb :keys [api db]} txs]
-  ((:with api) db txs))
-
-(defn transact! [{:as kb :keys [api conn]} txs]
-  ((:transact! api) conn txs))
-
-;; (defn listen! [{:as kb :keys [api]} & args]
-;;   ;; ???: protocol instead
-;;   (apply (:listen! api) args))
-
-;; (defn filter* [{:as kb :keys [api db]} & args]
-;;   ;; TODO: change to name filter, fix clash with clojure.core
-;;   (apply (:filter api) db args))
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; UNIFIED - treating server and client as peers
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -197,19 +165,9 @@
                    [:db/add eid :dat.sync/uuident (gen-uuid)])))
           tx-data)))))
 
-(defn ^:export snap-transact [{:keys [txs dat.sync/db-snap]}]
-  ;; ***FIXME: either use datascript middleware or drop middleware entirely
-  (assoc
-    (middle-with
-      db-snap
-      txs
-      (assoc (meta txs)
-        :datascript.db/tx-middleware uuident-all-the-things))
-    :dat.reactor/event :dat.sync/tx-report))
-
-(defn ^:export snap-transact2 [{:keys [with db]} conn {:keys [txs]}]
+(defn ^:export snap-transact [{:keys [with snap]} conn {:keys [txs]}]
   ;; ???: uuident-all-the-things middleware?
-  (with (db conn) txs))
+  (with (snap conn) txs))
 
 (defn ^:export tx-report->gdatoms [api {:as seg :keys [tx-data db-after]}]
   (let [gdatoms (into [] (datom><gdatom api db-after) tx-data)]
@@ -312,17 +270,16 @@
   (fn [[e _ _ _ _]]
     (:db/ident (entity db e))))
 
-(defn snapshot [{:as app :keys [transactor datom-api]}
+(defn snapshot [{:as knowbase :keys [conn]
+                 {:as datom-api :keys [snap entity]} :datom-api}
                 {:as event-msg :keys [dat.remote/peer-id]}]
   (log/info "Sending bootstrap message" peer-id)
-  (let [db ((:db datom-api) (:conn datom-api))
-        entity (:entity datom-api)
-        snap (protocols/snapshot transactor)
+  (let [db (snap conn)
         has-ident? (datom->has-ident? datom-api db)
         datoms (into
                  []
                  (datom><gdatom datom-api db)
-                 snap)
+                 (protocols/snapshot knowbase))
         uuidents (filter identity-gdatom? datoms)
         ident-datoms (filter has-ident? datoms)
         core-schema-datoms (filter (fn [[_ a _ _ _]] (#{:db/cardinality :db/valueType :db/unique :db/ident} a)) ident-datoms) ;; swap order w ident-datoms for more efficient algo
@@ -432,10 +389,10 @@
 ;; We handle the bootstrap message by simply sending back the bootstrap data
 (defmethod event-msg-handler :dat.sync.client/bootstrap
   ;; What is send-fn here? Does that wrap the uid for us? (0.o)
-  [{:as app :keys [transactor remote datom-api]} {:as event-msg :keys [dat.remote/peer-id]}]
+  [{:as app :keys [knowbase remote datom-api]} {:as event-msg :keys [dat.remote/peer-id]}]
   (async/put!
     (protocols/send-chan remote)
-    (snapshot app event-msg))))
+    (snapshot knowbase event-msg))))
 
 ;; Fallback handler; should send message saying I don't know what you mean
 (defmethod event-msg-handler :default ; Fallback
@@ -489,10 +446,10 @@
                        #(comp datascript.db/schema-middleware (or % identity)))]
     seg))
 
-(defn transact-segment! [transactor {:as seg :keys [txs tx-meta]}]
+(defn transact-segment! [{:as knowbase :keys [datom-api conn]} {:as seg :keys [txs tx-meta]}]
 ;;   (log/info "transacting" seg)
-  (protocols/transact! transactor txs tx-meta)
-;;   (log/info "db-after" @(:conn transactor))
+  ((:transact! datom-api) conn txs tx-meta)
+;;   (log/info "db-after" ((:snap datom-api) conn))
   )
 
 ;; This is just a little glue; A system component that plugs in to pipe messages from the remote to the
@@ -526,22 +483,17 @@
 
 (def base-catalog
   [{:onyx/type :function
-    :onyx/name :dat.sync/snap-transact
-    :onyx/fn ::snap-transact
-    :onyx/batch-size onyx-batch-size}
-   {:onyx/type :function
     :onyx/name ::snapshot
     :onyx/fn ::snapshot
     :onyx/batch-size onyx-batch-size}
     ])
 
-(defrecord DatsyncClient [dispatcher remote reactor transactor datom-api conn]
+(defrecord DatsyncClient [dispatcher remote reactor knowbase conn]
   component/Lifecycle
   (start [component]
-    (let [component (assoc component :conn (or conn (:conn datom-api))) ;; FIXME: handlers should get the conn from db themselves
+    (let [component (assoc component :conn (or conn (:conn knowbase))) ;; FIXME: handlers should get the conn from db themselves
           onyx-batch-size 20]
       (log/info "Starting Datsync component")
-;;       (dispatcher/dispatch! dispatcher [:dat.sync.client/merge-schema base-schema])
       (oreactor/expand-job!
         reactor
         ::base-job
@@ -561,10 +513,10 @@
              :dat.reactor/chan (protocols/recv-chan dispatcher)
              :onyx/name :dat.view.dom/event}
             {:onyx/type :function
-             :onyx/name :dat.sync/snap-transact2
-             :onyx/fn ::snap-transact2
-             :datom-api datom-api
-             :conn (:conn datom-api)
+             :onyx/name :dat.sync/snap-transact
+             :onyx/fn ::snap-transact
+             :datom-api (:datom-api knowbase)
+             :conn (:conn knowbase)
              :onyx/params [:datom-api :conn]
              :onyx/batch-size onyx-batch-size}
             {:onyx/type :output
@@ -581,11 +533,11 @@
              :onyx/name :dat.remote/send}
 ;;            FIXME: looping txes {:onyx/type :input
 ;;              :onyx/batch-size onyx-batch-size
-;;              :dat.reactor/chan (protocols/recv-chan transactor)
+;;              :dat.reactor/chan (protocols/recv-chan knowbase)
 ;;              :onyx/name :dat.sync/tx-report}
             {:onyx/type :output
              :onyx/batch-size onyx-batch-size
-             :dat.reactor/chan (oreactor/handler-chan! transactor transact-segment!) ;;(protocols/send-chan transactor)
+             :dat.reactor/chan (oreactor/handler-chan! knowbase transact-segment!) ;;(protocols/send-chan knowbase)
              :onyx/name :dat.sync/transact}
             {:onyx/type :function
              :onyx/name :dat.sync/localize
@@ -603,8 +555,8 @@
              :onyx/name :dat.sync/globalize
              :onyx/fn ::tx-report->gdatoms
              :onyx/batch-size onyx-batch-size
-             ::api datom-api
-             :onyx/params [::api]}
+             :datom-api (:datom-api knowbase)
+             :onyx/params [:datom-api]}
              ]
          :workflow
            [[:dat.view.dom/event :dat.reactor/legacy]
@@ -613,7 +565,7 @@
             [:dat.remote/recv :dat.sync/localize] [:dat.sync/localize :dat.sync/transact]
              [:dat.remote/recv ::could-update-schema] [::could-update-schema :dat.sync/localize]
 ;;             FIXME: stop tx looping [:dat.sync/tx-report :dat.sync/handle-legacy-tx-report] [:dat.sync/handle-legacy-tx-report :dat.remote/send]
-            [:dat.view.dom/event :dat.sync/snap-transact2] [:dat.sync/snap-transact2 :dat.sync/globalize] [:dat.sync/globalize :dat.remote/send]
+            [:dat.view.dom/event :dat.sync/snap-transact] [:dat.sync/snap-transact :dat.sync/globalize] [:dat.sync/globalize :dat.remote/send]
 ;;              [:dat.remote/recv :dat.sync/legacy-localize-txs]
 ;;              [:dat.sync/legacy-localize-txs :dat.reactor/legacy]
 ;;              [:dat.sync/legacy-localize-txs :dat.sync/transact]
@@ -621,7 +573,7 @@
             ]
            :flow-conditions
            [{:flow/from :dat.view.dom/event
-             :flow/to [:dat.sync/snap-transact2]
+             :flow/to [:dat.sync/snap-transact]
              :flow/predicate ::transaction?}
             {:flow/from :dat.remote/recv
              :flow/to [::could-update-schema]
@@ -664,7 +616,7 @@
 (defn new-datsync-client []
   (map->DatsyncClient {}))
 
-(defrecord DatsyncServer [dispatcher remote transactor datom-api reactor]
+(defrecord DatsyncServer [dispatcher remote knowbase reactor]
   component/Lifecycle
   (start [component]
     (let [] ;; ???: kill-chan
@@ -702,11 +654,11 @@
              :onyx/name :dat.remote/send}
             {:onyx/type :input
              :onyx/batch-size onyx-batch-size
-             :dat.reactor/chan (protocols/recv-chan transactor)
+             :dat.reactor/chan (protocols/recv-chan knowbase)
              :onyx/name :dat.sync/tx-report}
             {:onyx/type :output
              :onyx/batch-size onyx-batch-size
-             :dat.reactor/chan (oreactor/handler-chan! transactor transact-segment!) ;; not implemented: (protocols/send-chan transactor)
+             :dat.reactor/chan (oreactor/handler-chan! knowbase transact-segment!) ;; not implemented: (protocols/send-chan knowbase)
              :onyx/name :dat.sync/transact}
             {:onyx/type :function
              :onyx/name :dat.sync/localize
@@ -716,8 +668,8 @@
              :onyx/name :dat.sync/globalize
              :onyx/fn ::tx-report->gdatoms
              :onyx/batch-size onyx-batch-size
-             ::api datom-api
-             :onyx/params [::api]}
+             :datom-api (:datom-api knowbase)
+             :onyx/params [:datom-api]}
 ;;             {:onyx/type :function
 ;;              :onyx/name :dat.sync/handle-legacy-tx-report
 ;;              :onyx/fn ::handle-legacy-tx-report
@@ -738,9 +690,9 @@
            [{:flow/from :dat.remote/recv
              :flow/to [::snapshot]
              :flow/predicate ::request-snapshot?}
-            {:flow/from :dat.view.dom/event
-             :flow/to [:dat.sync/snap-transact]
-             :flow/predicate ::source-from-transactor?}
+;;             {:flow/from :dat.view.dom/event
+;;              :flow/to [:dat.sync/snap-transact]
+;;              :flow/predicate ::source-from-transactor?} ;; FIXME: deprecated
             {:flow/from :dat.remote/recv
              :flow/to [:dat.sync/localize]
              :flow/predicate ::localize?}
