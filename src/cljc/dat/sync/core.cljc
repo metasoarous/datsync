@@ -165,9 +165,12 @@
                    [:db/add eid :dat.sync/uuident (gen-uuid)])))
           tx-data)))))
 
-(defn ^:export snap-transact [{:keys [with snap]} conn {:keys [txs]}]
+(defn ^:export snap-transact [{:keys [with snap]} conn {:keys [txs tx-meta]}]
   ;; ???: uuident-all-the-things middleware?
-  (with (snap conn) txs))
+  (with (snap conn) txs
+      (update-in (or tx-meta {})
+        [:datascript.db/tx-middleware]
+                 #(comp (or % identity) uuident-all-the-things))))
 
 (defn ^:export tx-report->gdatoms [api {:as seg :keys [tx-data db-after]}]
   (let [gdatoms (into [] (datom><gdatom api db-after) tx-data)]
@@ -196,6 +199,15 @@
     (into seg
       {:dat.reactor/event :dat.sync/local-txs
        :txs (gdatoms->local-txs datoms)})))
+
+(defn ^:export split-id-datoms [{:as seg :keys [datoms]}]
+  (let [local-id-assignments (filter identity-gdatom? datoms)
+        other-datoms (remove identity-gdatom? datoms)]
+    ;; ***FIXME: this is a hack. I thought we would only need to do this for the snapshot, but it appears to be an all the time problem. Is it even safe to split the transaction like this? Can we build a datomic fn that removes the need for this?
+    (assoc
+      seg
+      :datoms nil
+      :datomses [local-id-assignments other-datoms])))
 
 (def schema-uuident-query
   '[:find [?attr-uuid ...]
@@ -483,6 +495,10 @@
 
 (def base-catalog
   [{:onyx/type :function
+    :onyx/name ::split-id-datoms
+    :onyx/fn ::split-id-datoms
+    :onyx/batch-size onyx-batch-size}
+   {:onyx/type :function
     :onyx/name ::snapshot
     :onyx/fn ::snapshot
     :onyx/batch-size onyx-batch-size}
@@ -679,7 +695,7 @@
            [[:dat.view.dom/event :dat.reactor/legacy]
             [:dat.remote/recv :dat.reactor/legacy]
             [:dat.remote/recv ::snapshot] [::snapshot :dat.remote/send]
-            [:dat.remote/recv :dat.sync/localize] [:dat.sync/localize :dat.sync/transact]
+            [:dat.remote/recv ::split-id-datoms] [::split-id-datoms :dat.sync/localize] [:dat.sync/localize :dat.sync/transact]
 ;;             [:dat.sync/tx-report :dat.sync/handle-legacy-tx-report] [:dat.sync/handle-legacy-tx-report :dat.remote/send]
             [:dat.sync/tx-report :dat.sync/globalize]
 ;;             [:dat.sync/globalize :dat.remote/send] ;; ***FIXME: process tx-report
@@ -694,7 +710,7 @@
 ;;              :flow/to [:dat.sync/snap-transact]
 ;;              :flow/predicate ::source-from-transactor?} ;; FIXME: deprecated
             {:flow/from :dat.remote/recv
-             :flow/to [:dat.sync/localize]
+             :flow/to [::split-id-datoms]
              :flow/predicate ::localize?}
             {:flow/from :dat.view.dom/event
              :flow/to [:dat.reactor/legacy]
