@@ -162,7 +162,7 @@
                               [:db/add eid :dat.sync/uuident (gen-uuid)])))
                      tx-data)
           ]
-      (log/debug "uuident-all-the-things" uuidents)
+;;       (log/debug "uuident-all-the-things" uuidents)
       (transact report uuidents))))
 
 (defn ^:export snap-transact [{:keys [with snap]} conn {:keys [txs tx-meta]}]
@@ -302,7 +302,7 @@
 ;;     (log/debug "nil-id-datoms:" (into [] (filter (fn [[[_ iv] _ _ _ _]]
 ;;                                                     (nil? iv))) datoms))
     ;; ???: snapshot gives sequence. what's the right way to handle this. where should batching occur?
-    (log/debug "SNAP!!!" (vec db))
+;;     (log/debug "SNAP!!!" (vec db))
 ;;     (log/debug "->" (vec (take 10 datoms)))
     (let [seg {:dat.remote/peer-id peer-id
                :dat.reactor/event :dat.sync/snapshot
