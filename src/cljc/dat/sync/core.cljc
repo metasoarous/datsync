@@ -151,19 +151,19 @@
   "tx-middleware to add uuidents to any fresh entity that didn't get one assigned during the transaction."
   [transact]
   (fn [report txs]
-    (let [{:as report :keys [db-after tx-data]} (transact report txs)]
-      (log/debug "middling")
-      (transact
-        report
-        (into
-          []
-          (comp
-            (map (fn [[eid _ _ _ _]] eid))
-            (distinct)
-            (remove #(:dat.sync/uuident (ds/entity db-after %)))
-            (map (fn [eid]
-                   [:db/add eid :dat.sync/uuident (gen-uuid)])))
-          tx-data)))))
+    (let [{:as report :keys [db-after tx-data]} (transact report txs)
+          uuidents (into
+                     []
+                     (comp
+                       (map (fn [[eid _ _ _ _]] eid))
+                       (distinct)
+                       (remove #(:dat.sync/uuident (ds/entity db-after %)))
+                       (map (fn [eid]
+                              [:db/add eid :dat.sync/uuident (gen-uuid)])))
+                     tx-data)
+          ]
+      (log/debug "uuident-all-the-things" uuidents)
+      (transact report uuidents))))
 
 (defn ^:export snap-transact [{:keys [with snap]} conn {:keys [txs tx-meta]}]
   ;; ???: uuident-all-the-things middleware?
@@ -174,7 +174,7 @@
 
 (defn ^:export tx-report->gdatoms [api {:as seg :keys [tx-data db-after]}]
   (let [gdatoms (into [] (datom><gdatom api db-after) tx-data)]
-  (log/info "tx-report->gdatoms" gdatoms)
+;;   (log/info "tx-report->gdatoms" gdatoms)
   {:dat.reactor/event :dat.sync/gdatoms
    :datoms gdatoms}))
 
@@ -193,8 +193,6 @@
     gdatoms))
 
 (defn ^:export gdatoms->local-ds-txs [{:as seg :keys [datoms datomses]}]
-  ;; ***???: need a datomic version of this
-  ;; ???: do we need a universal db function?
   (for [datoms (or datomses [datoms])]
     (into seg
       {:dat.reactor/event :dat.sync/local-txs
@@ -304,7 +302,7 @@
 ;;     (log/debug "nil-id-datoms:" (into [] (filter (fn [[[_ iv] _ _ _ _]]
 ;;                                                     (nil? iv))) datoms))
     ;; ???: snapshot gives sequence. what's the right way to handle this. where should batching occur?
-;;     (log/debug "SNAP!!!"(vec (take 10 snap)))
+    (log/debug "SNAP!!!" (vec db))
 ;;     (log/debug "->" (vec (take 10 datoms)))
     (let [seg {:dat.remote/peer-id peer-id
                :dat.reactor/event :dat.sync/snapshot
@@ -461,7 +459,7 @@
 (defn transact-segment! [{:as knowbase :keys [datom-api conn]} {:as seg :keys [txs tx-meta]}]
 ;;   (log/info "transacting" seg)
   ((:transact! datom-api) conn txs tx-meta)
-;;   (log/info "db-after" ((:snap datom-api) conn))
+  (log/info "db-after" ((:snap datom-api) conn))
   )
 
 ;; This is just a little glue; A system component that plugs in to pipe messages from the remote to the
