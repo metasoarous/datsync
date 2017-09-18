@@ -5,6 +5,7 @@
     [datascript.db]
     [dat.spec.protocols :as protocols]
     [dat.spec.utils :refer [deep-merge cat-into]]
+    [com.rpl.specter :as specter]
     #?(:clj [datomic.api :as dapi])
     ))
 
@@ -102,3 +103,17 @@
      :datascript n
      :datomic
      #?(:clj (dapi/tempid part n)))))
+
+(defn datomic-tempids->ints [txs]
+  ;; TODO: handle datomic partitions
+  (let [txs-after (specter/transform
+                    (specter/walker #(instance? datomic.db.DbId %))
+                    #(:idx %)
+                    txs)]
+    txs-after))
+
+(defn mw-datomic-tempid [transact]
+  (fn [{:as report :keys [db-after]} txs]
+    (let [txs (datomic-tempids->ints txs)]
+;;       (log/debug "txs-post-id" txs)
+      (transact report txs))))

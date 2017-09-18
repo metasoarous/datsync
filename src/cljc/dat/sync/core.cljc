@@ -155,6 +155,13 @@
           uuidents (uuident-all-the-things* db-after tx-data)]
       (transact report uuidents))))
 
+(def ident-tx-meta
+  {:datascript.db/tx-middleware
+   (comp
+     d/mw-datomic-tempid
+     uuident-all-the-things
+     datascript.db/schema-middleware)})
+
 (defn ^:export snap-transact [conn {:keys [txs tx-meta]}]
   (d/with (d/snap conn) txs
       (update-in (or tx-meta {})
