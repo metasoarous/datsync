@@ -5,6 +5,7 @@
              :refer [>! <! #?@(:clj [go go-loop])]]
             [dat.remote :as remote]
             [datascript.db]
+            [dat.sync.db :as d]
             [dat.reactor :as reactor]
             [dat.reactor.onyx :as oreactor]
             [dat.reactor.dispatcher :as dispatcher]
@@ -18,12 +19,11 @@
 ;; TODO: 8hrs get figwheel loading onyx compiled fns
 ;; TODO: 8hrs tx-cycle protection
 ;; TODO: 12hrs dirty peer
-;; TODO: 8hrs persistent datascript replacement
-;; TODO: 8hrs race condition debugging (async delay
 ;; TODO: 40hrs ios compatability
 ;; TODO: 40hrs datview onyx integration
 ;; TODO: 4hrs refactor/clean
 ;; TODO: 4hrs debug slf4j logging
+;; TODO: 1hr multiple todos with persistent datascript caused by importer and nippy both loading the data
 ;; ???: macro to register db function that works in both datascript and datomic. Also passes the api.
 ;; ???: make transaction fn calls compatible between datascript datomic
 ;; ???: add tools to datascript for accreting schema like attr aliasing, attr deprecation, etc. (closer to full ident support)
@@ -38,15 +38,15 @@
 (defn identity-gdatom? [[[ident-attr _] attr _ _ _]]
   (= ident-attr attr))
 
-(defn globalize-uuident [{:keys [entity]} db eid]
-  (let [it (entity db eid)
+(defn globalize-uuident [db eid]
+  (let [it (d/entity db eid)
         dbident (:db/ident it)]
     ;; TODO: support for all kinds of idents
     (cond
       dbident [:db/ident dbident]
       :else [:dat.sync/uuident (:dat.sync/uuident it)])))
 
-(defn localize-uuident-deprecated [{:keys [entity]} db euuid]
+(defn localize-uuident-deprecated [db euuid]
   [:dat.sync/uuident euuid])
 
 (defn datom->tx [[e a v tx add?]]
@@ -57,10 +57,10 @@
 (defn datom><tx []
   (map datom->tx))
 
-(defn ref? [{:keys [q]} db attr-ident]
+(defn ref? [db attr-ident]
   (or (#{:db/cardinality :db/valueType :db/unique} attr-ident) ;; so we know base-schema are refs before the base-schema is transacted into the db.
       ;;???: maybe have base-schema tied to a built in uuident we know at compile time (slower)? maybe have schema datoms fully integrated one datom at a time?
-      (q
+      (d/q
         '[:find ?attr .
           :in $ ?ident
           :where
@@ -69,8 +69,8 @@
           [?ref-enum :db/ident :db.type/ref]]
         db attr-ident)))
 
-(defn many? [{:keys [q]} db attr-ident]
-  (q
+(defn many? [db attr-ident]
+  (d/q
     '[:find ?attr .
       :in $ ?ident
       :where
@@ -79,39 +79,39 @@
        [?many-enum :db/ident :db.cardinality/many]]
     db attr-ident))
 
-(defn datom-identer [api db uuident]
+(defn datom-identer [db uuident]
   (fn [[e a v tx add?]]
-    [(uuident api db e)
+    [(uuident db e)
      a
-     (if-not (ref? api db a)
+     (if-not (ref? db a)
        v
-       (if (and (many? api db a) (coll? v)) ;; ???: overkill? in datom for no coll as v i think
-         (map (partial uuident api db) v)
-         (uuident api db v)))
+       (if (and (many? db a) (coll? v)) ;; ???: overkill? in datom for no coll as v i think
+         (map (partial uuident db) v)
+         (uuident db v)))
      ;; FIXME: I don't think this is resolving properly on the datascript side. It's also probably not the best way to store things anyways. Maybe tx and eid should be stored as plain uuids???
-     tx;;(uuident api db tx)
+     tx;;(uuident db tx)
      add?]))
 
-(defn datom-attr-resolver [{:keys [entity]} db]
+(defn datom-attr-resolver [db]
   (fn [[e a v tx add?]]
     [e
      (if (keyword? a)
        a
-       (:db/ident (entity db a)))
+       (:db/ident (d/entity db a)))
      v
      tx
      add?]))
 
-(defn datom><gdatom [datom-api db]
+(defn datom><gdatom [db]
   (comp
-    (map (datom-attr-resolver datom-api db))
-    (map (datom-identer datom-api db globalize-uuident))))
+    (map (datom-attr-resolver db))
+    (map (datom-identer db globalize-uuident))))
 
-(defn gdatom><datom [datom-api db]
+(defn gdatom><datom [db]
   identity)
 
-(defn gdatom><datom-deprecated [datom-api db]
-  (map (datom-identer datom-api db localize-uuident-deprecated)))
+(defn gdatom><datom-deprecated [db]
+  (map (datom-identer db localize-uuident-deprecated)))
 
 (defn assign-ident [[[ident-attr ident-value] a v tx add?]]
   {;;???: :db/id #db/id[:db.part/user]
@@ -134,46 +134,35 @@
       :tx-meta   tx-meta})
    tx-data))
 
-
-
-#?(:clj
-(defn uuident-all-the-things* [db]
-  (comp
-    (map (fn [[eid _ _ _ _]] eid))
-    (distinct)
-    (map (partial dapi/entity db))
-    (remove :db/ident)
-    (remove :dat.sync/uuident)
-    (map (fn [{:keys [db/id]}]
-           [:db/add id :dat.sync/uuident (gen-uuid)])))))
+(defn uuident-all-the-things* [db datoms]
+  (into
+    []
+    (comp
+      (map (fn [[eid _ _ _ _]] eid))
+      (distinct)
+      (map (partial d/entity db))
+      (remove :db/ident)
+      (remove :dat.sync/uuident)
+      (map (fn [{:keys [db/id]}]
+             [:db/add id :dat.sync/uuident (gen-uuid)])))
+    datoms))
 
 (defn uuident-all-the-things
   "tx-middleware to add uuidents to any fresh entity that didn't get one assigned during the transaction."
   [transact]
   (fn [report txs]
     (let [{:as report :keys [db-after tx-data]} (transact report txs)
-          uuidents (into
-                     []
-                     (comp
-                       (map (fn [[eid _ _ _ _]] eid))
-                       (distinct)
-                       (remove #(:dat.sync/uuident (ds/entity db-after %)))
-                       (map (fn [eid]
-                              [:db/add eid :dat.sync/uuident (gen-uuid)])))
-                     tx-data)
-          ]
-;;       (log/debug "uuident-all-the-things" uuidents)
+          uuidents (uuident-all-the-things* db-after tx-data)]
       (transact report uuidents))))
 
-(defn ^:export snap-transact [{:keys [with snap]} conn {:keys [txs tx-meta]}]
-  ;; ???: uuident-all-the-things middleware?
-  (with (snap conn) txs
+(defn ^:export snap-transact [conn {:keys [txs tx-meta]}]
+  (d/with (d/snap conn) txs
       (update-in (or tx-meta {})
         [:datascript.db/tx-middleware]
                  #(comp (or % identity) uuident-all-the-things))))
 
-(defn ^:export tx-report->gdatoms [api {:as seg :keys [tx-data db-after]}]
-  (let [gdatoms (into [] (datom><gdatom api db-after) tx-data)]
+(defn ^:export tx-report->gdatoms [{:as seg :keys [tx-data db-after]}]
+  (let [gdatoms (into [] (datom><gdatom db-after) tx-data)]
 ;;   (log/info "tx-report->gdatoms" gdatoms)
   {:dat.reactor/event :dat.sync/gdatoms
    :datoms gdatoms}))
@@ -207,88 +196,18 @@
       :datoms nil
       :datomses [local-id-assignments other-datoms])))
 
-(def schema-uuident-query
-  '[:find [?attr-uuid ...]
-    :where
-    [?attr-eid :db/ident]
-    [?attr-eid :dat.sync/uuident ?attr-uuid]])
-
-(def schema-map-query
-  '[:find ?attr (pull ?attr-eid [*])
-    :where
-    [?attr-eid :db/ident ?attr]])
-
-(def schema-eid-query
-  '[:find [?attr-eid ...]
-    :where
-    [?attr-eid :db/ident ?attr-ident]])
-
-(defn replace-schema
-  [db schema]
-  (ds/init-db (ds/datoms db :eavt) schema))
-
-(def global-schema
-  {:dat.sync/uuident {:db/ident :dat.sync/uuident
-;;                      :db/valueType :db.type/uuid
-                     :db/unique :db.unique/identity}})
-
-;; (def schema-schema
-;;   {:db/ident {:db/ident :db/ident
-;; ;;               :db/valueType :db.type/keyword
-;;               :db/unique :db.unique/identity}
-;;    :db/cardinality {:db/ident :db/cardinality
-;;                     :db/valueType :db.type/ref ;; enum
-;;                     }
-;;    :db/unique {:db/ident :db/unique
-;;                :db/valueType :db.type/ref ;; enum
-;;                }
-;;    :db/valueType {:db/ident :db/valueType
-;;                   :db/valueType :db.type/ref ;; enum
-;;                   }
-;;    :db/doc {:db/ident :db/doc
-;; ;;             :db/valueType :db.type/string
-;;             }
-;;    :db/index {:db/ident :db/index
-;; ;;               :db/valueType :db.type/boolean
-;;               }
-;;    :db/fulltext {:db/ident :db/fulltext
-;; ;;                  :db/valueType :db.type/boolean
-;;                  }
-;;    :db/isComponent {:db/ident :db/isComponent
-;; ;;                  :db/valueType :db.type/boolean
-;;                     }
-;;    :db/noHistory {:db/ident :db/noHistory
-;; ;;                  :db/valueType :db.type/boolean
-;;                   }})
-
-;; (defn test-schema-middleware []
-;;   (let [conn (ds/create-conn)]
-;;     (ds/transact!
-;;       conn
-;;       [{:db/ident :test
-;;         :db/cardinality :db.cardinality/many}]
-;;       {:datascript.db/tx-middleware datascript.db/schema-middleware})
-;;     (ds/transact!
-;;       conn
-;;       [{:db/id -1
-;;         :test :a}
-;;        {:db/id -1
-;;         :test :b}])
-;;     @conn))
-
-(defn datom->has-ident? [{:keys [entity]} db]
+(defn datom->has-ident? [db]
   (fn [[e _ _ _ _]]
-    (:db/ident (entity db e))))
+    (:db/ident (d/entity db e))))
 
-(defn snapshot [{:as knowbase :keys [conn]
-                 {:as datom-api :keys [snap entity]} :datom-api}
+(defn snapshot [{:as knowbase :keys [conn]}
                 {:as event-msg :keys [dat.remote/peer-id]}]
   (log/info "Sending bootstrap message" peer-id)
-  (let [db (snap conn)
-        has-ident? (datom->has-ident? datom-api db)
+  (let [db (d/snap conn)
+        has-ident? (datom->has-ident? db)
         datoms (into
                  []
-                 (datom><gdatom datom-api db)
+                 (datom><gdatom db)
                  (protocols/snapshot knowbase))
         uuidents (filter identity-gdatom? datoms)
         ident-datoms (filter has-ident? datoms)
@@ -445,8 +364,6 @@
       (reactor/resolve-to app db
         [[:dat.sync.client/recv-remote-tx tx-data]]))))
 
-
-
 (defn legacy-server-segment! [app seg]
   (event-msg-handler app seg))
 
@@ -456,11 +373,10 @@
                        #(comp datascript.db/schema-middleware (or % identity)))]
     seg))
 
-(defn transact-segment! [{:as knowbase :keys [datom-api conn]} {:as seg :keys [txs tx-meta]}]
-;;   (log/info "transacting" seg)
-  ((:transact! datom-api) conn txs tx-meta)
-  (log/info "db-after" ((:snap datom-api) conn))
-  )
+(defn transact-segment! [{:as knowbase :keys [conn]} {:as seg :keys [txs tx-meta]}]
+  (let [report (d/transact! conn txs tx-meta)]
+;;     (log/info "transacting:" (d/snap conn))
+    report))
 
 ;; This is just a little glue; A system component that plugs in to pipe messages from the remote to the
 ;; dispatch chan
@@ -529,9 +445,8 @@
             {:onyx/type :function
              :onyx/name :dat.sync/snap-transact
              :onyx/fn ::snap-transact
-             :datom-api (:datom-api knowbase)
              :conn (:conn knowbase)
-             :onyx/params [:datom-api :conn]
+             :onyx/params [:conn]
              :onyx/batch-size onyx-batch-size}
             {:onyx/type :output
              :onyx/batch-size onyx-batch-size
@@ -568,9 +483,7 @@
             {:onyx/type :function
              :onyx/name :dat.sync/globalize
              :onyx/fn ::tx-report->gdatoms
-             :onyx/batch-size onyx-batch-size
-             :datom-api (:datom-api knowbase)
-             :onyx/params [:datom-api]}
+             :onyx/batch-size onyx-batch-size}
              ]
          :workflow
            [[:dat.view.dom/event :dat.reactor/legacy]
@@ -681,9 +594,7 @@
             {:onyx/type :function
              :onyx/name :dat.sync/globalize
              :onyx/fn ::tx-report->gdatoms
-             :onyx/batch-size onyx-batch-size
-             :datom-api (:datom-api knowbase)
-             :onyx/params [:datom-api]}
+             :onyx/batch-size onyx-batch-size}
 ;;             {:onyx/type :function
 ;;              :onyx/name :dat.sync/handle-legacy-tx-report
 ;;              :onyx/fn ::handle-legacy-tx-report
@@ -723,56 +634,4 @@
 
 (defn new-datsync-server []
   (map->DatsyncServer {}))
-
-;; RACE_CONDITON:
-;; This seems to occur on the server mostly when you start the client in the middle of the server start cycle
-;; ???: need blocking async in clojure?
-;; Exception in thread "async-dispatch-4" java.lang.RuntimeException: java.lang.Exception: Not supported: class clojure.lang.Delay
-;; 	at com.cognitect.transit.impl.WriterFactory$1.write(WriterFactory.java:60)
-;; 	at cognitect.transit$write.invokeStatic(transit.clj:149)
-;; 	at cognitect.transit$write.invoke(transit.clj:146)
-;; 	at taoensso.sente.packers.transit$fn__38621$fn__38622$fn__38623$fn__38624.invoke(transit.cljc:58)
-;; 	at taoensso.sente.packers.transit.TransitPacker.pack(transit.cljc:94)
-;; 	at taoensso.sente$pack.invokeStatic(sente.cljc:223)
-;; 	at taoensso.sente$pack.invoke(sente.cljc:219)
-;; 	at taoensso.sente$make_channel_socket_server_BANG_$send_fn__36632$flush_buffer_BANG___36639.invoke(sente.cljc:437)
-;; 	at taoensso.sente$make_channel_socket_server_BANG_$send_fn__36632$fn__36983$state_machine__9551__auto____37050$fn__37052.invoke(sente.cljc:491)
-;; 	at taoensso.sente$make_channel_socket_server_BANG_$send_fn__36632$fn__36983$state_machine__9551__auto____37050.invoke(sente.cljc:489)
-;; 	at clojure.core.async.impl.ioc_macros$run_state_machine.invokeStatic(ioc_macros.clj:973)
-;; 	at clojure.core.async.impl.ioc_macros$run_state_machine.invoke(ioc_macros.clj:972)
-;; 	at clojure.core.async.impl.ioc_macros$run_state_machine_wrapped.invokeStatic(ioc_macros.clj:977)
-;; 	at clojure.core.async.impl.ioc_macros$run_state_machine_wrapped.invoke(ioc_macros.clj:975)
-;; 	at clojure.core.async.impl.ioc_macros$take_BANG_$fn__9569.invoke(ioc_macros.clj:986)
-;; 	at clojure.core.async.impl.channels.ManyToManyChannel$fn__4501.invoke(channels.clj:265)
-;; 	at clojure.lang.AFn.run(AFn.java:22)
-;; 	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1142)
-;; 	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:617)
-;; 	at java.lang.Thread.run(Thread.java:748)
-;; Caused by: java.lang.Exception: Not supported: class clojure.lang.Delay
-;; 	at com.cognitect.transit.impl.AbstractEmitter.marshal(AbstractEmitter.java:176)
-;; 	at com.cognitect.transit.impl.JsonEmitter.emitMap(JsonEmitter.java:158)
-;; 	at com.cognitect.transit.impl.AbstractEmitter.emitMap(AbstractEmitter.java:70)
-;; 	at com.cognitect.transit.impl.AbstractEmitter.marshal(AbstractEmitter.java:166)
-;; 	at com.cognitect.transit.impl.AbstractEmitter.emitArray(AbstractEmitter.java:82)
-;; 	at com.cognitect.transit.impl.AbstractEmitter.marshal(AbstractEmitter.java:164)
-;; 	at com.cognitect.transit.impl.AbstractEmitter.emitArray(AbstractEmitter.java:87)
-;; 	at com.cognitect.transit.impl.AbstractEmitter.marshal(AbstractEmitter.java:164)
-;; 	at com.cognitect.transit.impl.AbstractEmitter.emitTagged(AbstractEmitter.java:34)
-;; 	at com.cognitect.transit.impl.AbstractEmitter.emitEncoded(AbstractEmitter.java:59)
-;; 	at com.cognitect.transit.impl.AbstractEmitter.marshal(AbstractEmitter.java:169)
-;; 	at com.cognitect.transit.impl.AbstractEmitter.emitArray(AbstractEmitter.java:82)
-;; 	at com.cognitect.transit.impl.AbstractEmitter.marshal(AbstractEmitter.java:164)
-;; 	at com.cognitect.transit.impl.JsonEmitter.emitMap(JsonEmitter.java:158)
-;; 	at com.cognitect.transit.impl.AbstractEmitter.emitMap(AbstractEmitter.java:70)
-;; 	at com.cognitect.transit.impl.AbstractEmitter.marshal(AbstractEmitter.java:166)
-;; 	at com.cognitect.transit.impl.AbstractEmitter.emitArray(AbstractEmitter.java:82)
-;; 	at com.cognitect.transit.impl.AbstractEmitter.marshal(AbstractEmitter.java:164)
-;; 	at com.cognitect.transit.impl.AbstractEmitter.emitArray(AbstractEmitter.java:82)
-;; 	at com.cognitect.transit.impl.AbstractEmitter.marshal(AbstractEmitter.java:164)
-;; 	at com.cognitect.transit.impl.AbstractEmitter.marshalTop(AbstractEmitter.java:193)
-;; 	at com.cognitect.transit.impl.JsonEmitter.emit(JsonEmitter.java:28)
-;; 	at com.cognitect.transit.impl.WriterFactory$1.write(WriterFactory.java:57)
-;; 	... 19 more
-
-
 

@@ -80,7 +80,7 @@
                               (let [{:as seg :keys [dat.remote/peer-id]} (send-ev->seg (async/<! send>))]
                                 ;; TODO: give send shared chan-control with recv
                                 ;; TODO: error handling
-                                (log/info "send event to peer:" (:dat.reactor/event seg) (:id seg))
+;;                                 (log/debug "send event to peer:" (:dat.reactor/event seg) (:id seg))
 ;;                                 (if peer-id
                                 ;; TODO: fix uid function. Until then always broadcast.
 ;;                                   (send-fn peer-id [::segment (dissoc seg :dat.remote/peer-id)])
