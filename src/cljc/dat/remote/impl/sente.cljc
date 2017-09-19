@@ -60,6 +60,23 @@
    :wrap-recv-evs? false ;; helps with symmetry between client and server
    :packer (sente-transit/get-transit-packer)})
 
+(defn go-sente-send!
+  ([send> sock] (go-sente-send! send> sock 100))
+  ([send> {:as sente-sock :keys [send-fn connected-uids]} retries]
+   (go-loop
+     []
+     (let [ev (async/<! send>)
+           {:as seg :keys [dat.remote/peer-id]} (send-ev->seg ev)]
+       ;; TODO: give send shared chan-control with recv
+       ;; (log/debug "send event to peer:" peer-id (:dat.reactor/event seg) (:id seg))
+       (if peer-id
+         (send-fn peer-id [::segment (dissoc seg :dat.remote/peer-id)])
+         (if connected-uids
+           (doseq [uid (:any @connected-uids)]
+             (send-fn uid [::segment seg]))
+           (send-fn [::segment seg])))
+       (recur)))))
+
 (defrecord SenteRemote [sente-options send> recv> sente-sock stop-remote server?]
   component/Lifecycle
   (start [remote]
@@ -76,20 +93,7 @@
                 (sente/make-channel-socket! (:chsk-route sente-options) sock-options)))
           stop-remote (or stop-remote
                           (do
-                            (go-loop []
-                              (let [{:as seg :keys [dat.remote/peer-id]} (send-ev->seg (async/<! send>))]
-                                ;; TODO: give send shared chan-control with recv
-                                ;; TODO: error handling
-;;                                 (log/debug "send event to peer:" (:dat.reactor/event seg) (:id seg))
-;;                                 (if peer-id
-                                ;; TODO: fix uid function. Until then always broadcast.
-;;                                   (send-fn peer-id [::segment (dissoc seg :dat.remote/peer-id)])
-                                  (if connected-uids
-                                    (doseq [uid (:any @connected-uids)]
-                                      (send-fn uid [::segment seg]))
-                                    (send-fn [::segment seg])))
-;;                                      )
-                              (recur))
+                            (go-sente-send! send> sente-sock)
                             (sente/start-chsk-router!
                               ch-recv
                               #(let [seg (recv-ev-msg->seg %)]

@@ -6,6 +6,7 @@
             [dat.remote :as remote]
             [datascript.db]
             [dat.sync.db :as d]
+            [com.rpl.specter :as specter]
             [dat.reactor :as reactor]
             [dat.reactor.onyx :as oreactor]
             [dat.reactor.dispatcher :as dispatcher]
@@ -23,8 +24,6 @@
 ;; TODO: 40hrs datview onyx integration
 ;; TODO: 4hrs refactor/clean
 ;; TODO: 4hrs debug slf4j logging
-;; TODO: 1hr multiple todos with persistent datascript caused by importer and nippy both loading the data
-;; ???: macro to register db function that works in both datascript and datomic. Also passes the api.
 ;; ???: make transaction fn calls compatible between datascript datomic
 ;; ???: add tools to datascript for accreting schema like attr aliasing, attr deprecation, etc. (closer to full ident support)
 
@@ -32,8 +31,8 @@
 ;; UNIFIED - treating server and client as peers
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn gen-uuid []
-  (ds/squuid))
+;; (defn gen-uuid []
+;;   (ds/squuid))
 
 (defn identity-gdatom? [[[ident-attr _] attr _ _ _]]
   (= ident-attr attr))
@@ -122,51 +121,53 @@
     (filter identity-gdatom?)
     (map assign-ident)))
 
-(defn middle-with [db tx-data {:as tx-meta :keys [datascript.db/tx-middleware]}]
-  {:pre [(datascript.db/db? db)]}
-  ;; ???: skipping filtered db check
-  ((if tx-middleware (tx-middleware datascript.db/transact-tx-data) datascript.db/transact-tx-data)
-   (datascript.db/map->TxReport
-     {:db-before db
-      :db-after  db
-      :tx-data   []
-      :tempids   {}
-      :tx-meta   tx-meta})
-   tx-data))
+;; (defn middle-with [db tx-data {:as tx-meta :keys [datascript.db/tx-middleware]}]
+;;   {:pre [(datascript.db/db? db)]}
+;;   ;; ???: skipping filtered db check
+;;   ((if tx-middleware (tx-middleware datascript.db/transact-tx-data) datascript.db/transact-tx-data)
+;;    (datascript.db/map->TxReport
+;;      {:db-before db
+;;       :db-after  db
+;;       :tx-data   []
+;;       :tempids   {}
+;;       :tx-meta   tx-meta})
+;;    tx-data))
 
-(defn uuident-all-the-things* [db datoms]
-  (into
-    []
-    (comp
-      (map (fn [[eid _ _ _ _]] eid))
-      (distinct)
-      (map (partial d/entity db))
-      (remove :db/ident)
-      (remove :dat.sync/uuident)
-      (map (fn [{:keys [db/id]}]
-             [:db/add id :dat.sync/uuident (gen-uuid)])))
-    datoms))
+;; (defn uuident-all-the-things* [db datoms]
+;;   (into
+;;     []
+;;     (comp
+;;       (map (fn [[eid _ _ _ _]] eid))
+;;       (distinct)
+;;       (map (partial d/entity db))
+;;       (remove :db/ident)
+;;       (remove :dat.sync/uuident)
+;;       (map (fn [{:keys [db/id]}]
+;;              [:db/add id :dat.sync/uuident (gen-uuid)])))
+;;     datoms))
 
-(defn uuident-all-the-things
-  "tx-middleware to add uuidents to any fresh entity that didn't get one assigned during the transaction."
-  [transact]
-  (fn [report txs]
-    (let [{:as report :keys [db-after tx-data]} (transact report txs)
-          uuidents (uuident-all-the-things* db-after tx-data)]
-      (transact report uuidents))))
+;; (defn uuident-all-the-things
+;;   "tx-middleware to add uuidents to any fresh entity that didn't get one assigned during the transaction."
+;;   [transact]
+;;   (fn [report txs]
+;;     (let [{:as report :keys [db-after tx-data]} (transact report txs)
+;;           uuidents (uuident-all-the-things* db-after tx-data)]
+;;       (transact report uuidents))))
 
-(def ident-tx-meta
-  {:datascript.db/tx-middleware
-   (comp
-     d/mw-datomic-tempid
-     uuident-all-the-things
-     datascript.db/schema-middleware)})
+;; (def ident-tx-meta
+;;   {:datascript.db/tx-middleware
+;;    (comp
+;;      d/mw-datomic-tempid
+;;      uuident-all-the-things
+;;      datascript.db/schema-middleware)})
 
 (defn ^:export snap-transact [conn {:keys [txs tx-meta]}]
   (d/with (d/snap conn) txs
-      (update-in (or tx-meta {})
-        [:datascript.db/tx-middleware]
-                 #(comp (or % identity) uuident-all-the-things))))
+;;       (update-in (or tx-meta {})
+;;         [:datascript.db/tx-middleware]
+;;                  #(comp (or % identity)
+;;                         uuident-all-the-things))
+    ))
 
 (defn ^:export tx-report->gdatoms [{:as seg :keys [tx-data db-after]}]
   (let [gdatoms (into [] (datom><gdatom db-after) tx-data)]
@@ -321,14 +322,31 @@
 ;;   (let [tx-report @(apply-remote-tx! (:conn datom-api) ?data)]
 ;;     (println "Do something with:" tx-report)))
 
+;; #?(:clj
+;; (defn wait-delays-then-send! [send-chan msg wait]
+;;   (let [delays (specter/select
+;;               (specter/walker delay?)
+;;               msg)]
+;;     (log/debug "delays")
+;;     (if-not delays
+;;     (async/put! send-chan msg)
+;;       (go-loop [delays delays]
+;;                (if (empty? delays)
+;;                  (>! send-chan msg)
+;;                  (do
+;;                    (log/debug "waiting for delays...")
+;;                    (<! (async/timeout wait))
+;;                    (recur (remove realized? delays)))))))))
+
 #?(:clj
 ;; We handle the bootstrap message by simply sending back the bootstrap data
 (defmethod event-msg-handler :dat.sync.client/bootstrap
   ;; What is send-fn here? Does that wrap the uid for us? (0.o)
   [{:as app :keys [knowbase remote datom-api]} {:as event-msg :keys [dat.remote/peer-id]}]
-  (async/put!
-    (protocols/send-chan remote)
-    (snapshot knowbase event-msg))))
+  (let [bootstrap (snapshot knowbase event-msg)]
+      (async/put!
+        (protocols/send-chan remote)
+        bootstrap))))
 
 ;; Fallback handler; should send message saying I don't know what you mean
 (defmethod event-msg-handler :default ; Fallback
@@ -382,7 +400,7 @@
 
 (defn transact-segment! [{:as knowbase :keys [conn]} {:as seg :keys [txs tx-meta]}]
   (let [report (d/transact! conn txs tx-meta)]
-;;     (log/info "transacting:" (d/snap conn))
+    (log/info "transacting:" (d/snap conn))
     report))
 
 ;; This is just a little glue; A system component that plugs in to pipe messages from the remote to the

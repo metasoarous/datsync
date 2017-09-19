@@ -7,8 +7,14 @@
     [dat.spec.utils :refer [deep-merge cat-into]]
     [com.rpl.specter :as specter]
     #?(:clj [datomic.api :as dapi])
-    ))
+    #?(:clj [net.cgrand.macrovich :as macros]))
+  #?(:cljs
+      (:require-macros [net.cgrand.macrovich :as macros]
+        [dat.sync.db :refer [function call]])))
 
+;;;
+;;; Dispatch
+;;;
 (defn datascript? [db-or-conn]
   (or
     (ds/conn? db-or-conn)
@@ -19,16 +25,9 @@
     :datascript
     :datomic))
 
-;; #?(:clj
-;; (defmacro if-datascript [db-or-conn iff thenn]
-;;   `(if-cljs
-;;      (if (datascript? ~db-or-conn)
-;;        ~iff
-;;        (throw (ex-info "Datomic not supported in cljs")))
-;;      (if (datascript? ~db-or-conn)
-;;        ~iff
-;;        ~thenn))))
-
+;;;
+;;; Datom API
+;;;
 (defn entity [db eid]
   (case (db-kind db)
     :datascript (ds/entity db eid)
@@ -49,34 +48,100 @@
     :datascript (apply ds/q q-expr db ins)
     :datomic #?(:clj (apply dapi/q q-expr db ins))))
 
-(defn with
-  ([db txs] (with db txs nil))
-  ([db txs tx-meta]
-  (case (db-kind db)
-    :datascript (ds/with db txs tx-meta)
-    :datomic #?(:clj (dapi/with db txs)))))
-
 (defn snap [conn]
   (case (db-kind conn)
     :datascript @conn
     :datomic #?(:clj (dapi/db conn))))
 
+;;;
+;;; Middleware
+;;;
+(defn gen-uuid []
+  (ds/squuid))
+
+(defn datomic-tempids->ints [txs]
+  ;; TODO: handle datomic partitions
+  (let [txs-after (specter/transform
+                    (specter/walker #(instance? datomic.db.DbId %))
+                    #(:idx %)
+                    txs)]
+    txs-after))
+
+(defn mw-datomic-tempid [transact]
+  (fn [{:as report :keys [db-after]} txs]
+    (let [txs (datomic-tempids->ints txs)]
+;;       (log/debug "txs-post-id" txs)
+      (transact report txs))))
+
+(defn uuident-all-the-things* [db datoms]
+  (into
+    []
+    (comp
+      (map (fn [[eid _ _ _ _]] eid))
+      (distinct)
+      (map (partial entity db))
+      (remove :db/ident)
+      (remove :dat.sync/uuident)
+      (map (fn [{:keys [db/id]}]
+             [:db/add id :dat.sync/uuident (gen-uuid)])))
+    datoms))
+
+(defn mw-uuident-all-the-things
+  "tx-middleware to add uuidents to any fresh entity that didn't get one assigned during the transaction."
+  [transact]
+  (fn [report txs]
+    (let [{:as report :keys [db-after tx-data]} (transact report txs)
+          uuidents (uuident-all-the-things* db-after tx-data)]
+      (transact report uuidents))))
+
+(defn compatability-meta [tx-meta]
+  (update-in
+    tx-meta
+    [:datascript.db/tx-middleware]
+    #(comp
+       #?(:clj mw-datomic-tempid)
+       (or % identity)
+       mw-uuident-all-the-things
+       datascript.db/schema-middleware)))
+
+;;;
+;;; Transacting
+;;;
+(defn with
+  ([db txs] (with db txs nil))
+  ([db txs tx-meta]
+  (case (db-kind db)
+    :datascript (ds/with db txs (compatability-meta tx-meta))
+    :datomic #?(:clj (dapi/with db txs)))))
+
 (defn transact!
   ([conn txs] (transact! conn txs nil))
   ([conn txs tx-meta]
   (case (db-kind conn)
-    :datascript (ds/transact! conn txs tx-meta)
+    :datascript (ds/transact! conn txs (compatability-meta tx-meta))
+
     ;; ???: does always returning the report negatively affect datomic efficiency?
     :datomic #?(:clj @(dapi/transact conn txs)))))
 
+;;;
+;;; Experimental
+;;;
 #?(:clj
 (defmacro function
-  "For datascript your requires should match your ns. You can have less requires, but not different"
+  "For cljs your requires should match your ns. You can have less requires, but not different"
   [{:as form :keys [params code]}]
-  ;; ???:
-  `(case (db-kind db)
-     :datascript (fn ~params ~code)
-     :datomic ~(dapi/function form))))
+  `(macros/case
+     :cljs (fn ~params ~code)
+     :clj ;;(fn ~params ~code)
+     (dapi/function '~form))))
+
+#?(:clj
+(defmacro call
+  "Function name and :db/ident must match"
+  [conn-or-db [sym-or-keyword & args]]
+  `(case (db-kind ~conn-or-db)
+     :datascript ~(into [:db.fn/call (symbol (namespace sym-or-keyword) (name sym-or-keyword))] args)
+     :datomic ~(into [(keyword (namespace sym-or-keyword) (name sym-or-keyword))] args))))
 
 (def ^{:private true} current-tempid (atom 0))
 (defn- roll!
@@ -103,17 +168,3 @@
      :datascript n
      :datomic
      #?(:clj (dapi/tempid part n)))))
-
-(defn datomic-tempids->ints [txs]
-  ;; TODO: handle datomic partitions
-  (let [txs-after (specter/transform
-                    (specter/walker #(instance? datomic.db.DbId %))
-                    #(:idx %)
-                    txs)]
-    txs-after))
-
-(defn mw-datomic-tempid [transact]
-  (fn [{:as report :keys [db-after]} txs]
-    (let [txs (datomic-tempids->ints txs)]
-;;       (log/debug "txs-post-id" txs)
-      (transact report txs))))

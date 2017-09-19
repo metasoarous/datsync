@@ -35,7 +35,8 @@
 
                  ;; Not sure if we need; probably not... XXX
                  [bidi "2.0.16"]
-                 [io.rkn/conformity "0.4.0"]
+                 [net.cgrand/macrovich "0.2.0"]
+;;                  [io.rkn/conformity "0.4.0"]
                  [com.rpl/specter "0.13.2"]
                  [prismatic/plumbing "0.5.3"]]
 
