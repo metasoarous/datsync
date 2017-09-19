@@ -138,10 +138,10 @@
 #?(:clj
 (defmacro call
   "Function name and :db/ident must match"
-  [conn-or-db [sym-or-keyword & args]]
+  [conn-or-db [kw & args]]
   `(case (db-kind ~conn-or-db)
-     :datascript ~(into [:db.fn/call (symbol (namespace sym-or-keyword) (name sym-or-keyword))] args)
-     :datomic ~(into [(keyword (namespace sym-or-keyword) (name sym-or-keyword))] args))))
+     :datascript ~(into [:db.fn/call (symbol (namespace kw) (name kw))] args)
+     :datomic ~(into [(keyword (namespace kw) (name kw))] args))))
 
 (def ^{:private true} current-tempid (atom 0))
 (defn- roll!
