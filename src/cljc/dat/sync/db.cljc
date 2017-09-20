@@ -141,6 +141,12 @@
 ;;;
 ;;; Experimental
 ;;;
+(defn datoms
+  [db & args]
+  (case (db-kind db)
+  :datascript (apply ds/datoms db args)
+  (:datomic :wrapped-datomic) #?(:clj (apply dapi/datoms db args))))
+
 #?(:clj
 (defmacro function
   "For cljs your requires should match your ns. You can have less requires, but not different"
@@ -187,5 +193,5 @@
 
 (defn conn-from-conn [conn]
   (case (db-kind conn)
-    :datascript conn
-    (:datomic :wrapped-datomic) (DereffingDB. conn #?(:clj dapi/db :cljs nil) :wrapped-datomic)))
+    (:wrapped-datomic :datascript) conn
+    (:datomic) (DereffingDB. conn #?(:clj dapi/db :cljs nil) :wrapped-datomic)))

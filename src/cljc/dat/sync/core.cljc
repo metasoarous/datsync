@@ -18,22 +18,16 @@
             [taoensso.timbre :as log #?@(:cljs [:include-macros true])]))
 
 ;; TODO: 8hrs get figwheel loading onyx compiled fns
-;; TODO: 8hrs tx-cycle protection
 ;; TODO: 12hrs dirty peer
 ;; TODO: 40hrs ios compatability
 ;; TODO: 40hrs datview onyx integration
 ;; TODO: 4hrs refactor/clean
 ;; TODO: 4hrs debug slf4j logging
-;; ???: make transaction fn calls compatible between datascript datomic
 ;; ???: add tools to datascript for accreting schema like attr aliasing, attr deprecation, etc. (closer to full ident support)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; UNIFIED - treating server and client as peers
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;; (defn gen-uuid []
-;;   (ds/squuid))
-
 (defn identity-gdatom? [[[ident-attr _] attr _ _ _]]
   (= ident-attr attr))
 
