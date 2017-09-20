@@ -37,16 +37,16 @@
 (defn identity-gdatom? [[[ident-attr _] attr _ _ _]]
   (= ident-attr attr))
 
-(defn globalize-uuident [db eid]
+(defn globalize-uuid [db eid]
   (let [it (d/entity db eid)
         dbident (:db/ident it)]
     ;; TODO: support for all kinds of idents
     (cond
       dbident [:db/ident dbident]
-      :else [:dat.sync/uuident (:dat.sync/uuident it)])))
+      :else [:dat.sync/uuid (:dat.sync/uuid it)])))
 
-(defn localize-uuident-deprecated [db euuid]
-  [:dat.sync/uuident euuid])
+(defn localize-uuid-deprecated [db euuid]
+  [:dat.sync/uuid euuid])
 
 (defn datom->tx [[e a v tx add?]]
   ;; FIXME: ignoring tx for now
@@ -58,7 +58,7 @@
 
 (defn ref? [db attr-ident]
   (or (#{:db/cardinality :db/valueType :db/unique} attr-ident) ;; so we know base-schema are refs before the base-schema is transacted into the db.
-      ;;???: maybe have base-schema tied to a built in uuident we know at compile time (slower)? maybe have schema datoms fully integrated one datom at a time?
+      ;;???: maybe have base-schema tied to a built in uuid we know at compile time (slower)? maybe have schema datoms fully integrated one datom at a time?
       (d/q
         '[:find ?attr .
           :in $ ?ident
@@ -78,17 +78,17 @@
        [?many-enum :db/ident :db.cardinality/many]]
     db attr-ident))
 
-(defn datom-identer [db uuident]
+(defn datom-identer [db uuid]
   (fn [[e a v tx add?]]
-    [(uuident db e)
+    [(uuid db e)
      a
      (if-not (ref? db a)
        v
        (if (and (many? db a) (coll? v)) ;; ???: overkill? in datom for no coll as v i think
-         (map (partial uuident db) v)
-         (uuident db v)))
+         (map (partial uuid db) v)
+         (uuid db v)))
      ;; FIXME: I don't think this is resolving properly on the datascript side. It's also probably not the best way to store things anyways. Maybe tx and eid should be stored as plain uuids???
-     tx;;(uuident db tx)
+     tx;;(uuid db tx)
      add?]))
 
 (defn datom-attr-resolver [db]
@@ -104,13 +104,13 @@
 (defn datom><gdatom [db]
   (comp
     (map (datom-attr-resolver db))
-    (map (datom-identer db globalize-uuident))))
+    (map (datom-identer db globalize-uuid))))
 
 (defn gdatom><datom [db]
   identity)
 
 (defn gdatom><datom-deprecated [db]
-  (map (datom-identer db localize-uuident-deprecated)))
+  (map (datom-identer db localize-uuid-deprecated)))
 
 (defn assign-ident [[[ident-attr ident-value] a v tx add?]]
   {;;???: :db/id #db/id[:db.part/user]
@@ -133,7 +133,7 @@
 ;;       :tx-meta   tx-meta})
 ;;    tx-data))
 
-;; (defn uuident-all-the-things* [db datoms]
+;; (defn uuid-all-the-things* [db datoms]
 ;;   (into
 ;;     []
 ;;     (comp
@@ -141,32 +141,32 @@
 ;;       (distinct)
 ;;       (map (partial d/entity db))
 ;;       (remove :db/ident)
-;;       (remove :dat.sync/uuident)
+;;       (remove :dat.sync/uuid)
 ;;       (map (fn [{:keys [db/id]}]
-;;              [:db/add id :dat.sync/uuident (gen-uuid)])))
+;;              [:db/add id :dat.sync/uuid (gen-uuid)])))
 ;;     datoms))
 
-;; (defn uuident-all-the-things
-;;   "tx-middleware to add uuidents to any fresh entity that didn't get one assigned during the transaction."
+;; (defn uuid-all-the-things
+;;   "tx-middleware to add uuids to any fresh entity that didn't get one assigned during the transaction."
 ;;   [transact]
 ;;   (fn [report txs]
 ;;     (let [{:as report :keys [db-after tx-data]} (transact report txs)
-;;           uuidents (uuident-all-the-things* db-after tx-data)]
-;;       (transact report uuidents))))
+;;           uuids (uuid-all-the-things* db-after tx-data)]
+;;       (transact report uuids))))
 
 ;; (def ident-tx-meta
 ;;   {:datascript.db/tx-middleware
 ;;    (comp
 ;;      d/mw-datomic-tempid
-;;      uuident-all-the-things
+;;      uuid-all-the-things
 ;;      datascript.db/schema-middleware)})
 
 (defn ^:export snap-transact [conn {:keys [txs tx-meta]}]
-  (d/with (d/snap conn) txs
+  (d/with (d/db conn) txs
 ;;       (update-in (or tx-meta {})
 ;;         [:datascript.db/tx-middleware]
 ;;                  #(comp (or % identity)
-;;                         uuident-all-the-things))
+;;                         uuid-all-the-things))
     ))
 
 (defn ^:export tx-report->gdatoms [{:as seg :keys [tx-data db-after]}]
@@ -211,13 +211,13 @@
 (defn snapshot [{:as knowbase :keys [conn]}
                 {:as event-msg :keys [dat.remote/peer-id]}]
   (log/info "Sending bootstrap message" peer-id)
-  (let [db (d/snap conn)
+  (let [db (d/db conn)
         has-ident? (datom->has-ident? db)
         datoms (into
                  []
                  (datom><gdatom db)
                  (protocols/snapshot knowbase))
-        uuidents (filter identity-gdatom? datoms)
+        uuids (filter identity-gdatom? datoms)
         ident-datoms (filter has-ident? datoms)
         core-schema-datoms (filter (fn [[_ a _ _ _]] (#{:db/cardinality :db/valueType :db/unique :db/ident} a)) ident-datoms) ;; swap order w ident-datoms for more efficient algo
         other-schema-datoms (remove (fn [[_ a _ _ _]] (#{:db/cardinality :db/valueType :db/unique :db/ident} a)) ident-datoms)
@@ -233,7 +233,7 @@
 ;;     (log/debug "->" (vec (take 10 datoms)))
     (let [seg {:dat.remote/peer-id peer-id
                :dat.reactor/event :dat.sync/snapshot
-               :datomses [uuidents core-schema-datoms other-schema-datoms other-datoms]
+               :datomses [uuids core-schema-datoms other-schema-datoms other-datoms]
                }]
 ;;       (log/debug "snap-seg" seg)
       seg
@@ -400,7 +400,7 @@
 
 (defn transact-segment! [{:as knowbase :keys [conn]} {:as seg :keys [txs tx-meta]}]
   (let [report (d/transact! conn txs tx-meta)]
-    (log/info "transacting:" (d/snap conn))
+    (log/info "transacting:" (d/db conn))
     report))
 
 ;; This is just a little glue; A system component that plugs in to pipe messages from the remote to the

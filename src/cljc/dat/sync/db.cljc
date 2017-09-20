@@ -13,6 +13,19 @@
         [dat.sync.db :refer [function call]])))
 
 ;;;
+;;;
+;;;
+(defrecord DereffingDB [conn deref-fn kind]
+  #?(:cljs IDeref
+     :clj clojure.lang.IDeref)
+  (#?@(:clj [deref] :cljs [-deref]) [this] ((or deref-fn deref) conn))
+  ;; clojure.core.deref
+;;   DatomConn
+;;   (kind [this]
+;;     (:dat.sync.db/kind this))
+  )
+
+;;;
 ;;; Dispatch
 ;;;
 (defn datascript? [db-or-conn]
@@ -21,9 +34,11 @@
     (datascript.db/db? db-or-conn)))
 
 (defn db-kind [db-or-conn]
-  (if (datascript? db-or-conn)
-    :datascript
-    :datomic))
+  (cond
+    (datascript? db-or-conn) :datascript
+    (instance? DereffingDB db-or-conn) (:kind db-or-conn)
+    :else :datomic))
+
 
 ;;;
 ;;; Datom API
@@ -31,26 +46,26 @@
 (defn entity [db eid]
   (case (db-kind db)
     :datascript (ds/entity db eid)
-    :datomic #?(:clj (dapi/entity db eid))))
+    (:datomic :wrapped-datomic) #?(:clj (dapi/entity db eid))))
 
 (defn pull [db pull-expr eid]
   (case (db-kind db)
     :datascript (ds/pull db pull-expr eid)
-    :datomic #?(:clj (dapi/pull db pull-expr eid))))
+    (:datomic :wrapped-datomic) #?(:clj (dapi/pull db pull-expr eid))))
 
 (defn pull-many [db pull-expr eids]
   (case (db-kind db)
     :datascript (ds/pull-many db pull-expr eids)
-    :datomic #?(:clj (dapi/pull-many db pull-expr eids))))
+    (:datomic :wrapped-datomic) #?(:clj (dapi/pull-many db pull-expr eids))))
 
 (defn q [q-expr db & ins]
   (case (db-kind db)
     :datascript (apply ds/q q-expr db ins)
-    :datomic #?(:clj (apply dapi/q q-expr db ins))))
+    (:datomic :wrapped-datomic) #?(:clj (apply dapi/q q-expr db ins))))
 
-(defn snap [conn]
+(defn db [conn]
   (case (db-kind conn)
-    :datascript @conn
+    (:datascript :wrapped-datomic) @conn
     :datomic #?(:clj (dapi/db conn))))
 
 ;;;
@@ -73,7 +88,7 @@
 ;;       (log/debug "txs-post-id" txs)
       (transact report txs))))
 
-(defn uuident-all-the-things* [db datoms]
+(defn uuid-all-the-things* [db datoms]
   (into
     []
     (comp
@@ -81,18 +96,18 @@
       (distinct)
       (map (partial entity db))
       (remove :db/ident)
-      (remove :dat.sync/uuident)
+      (remove :dat.sync/uuid)
       (map (fn [{:keys [db/id]}]
-             [:db/add id :dat.sync/uuident (gen-uuid)])))
+             [:db/add id :dat.sync/uuid (gen-uuid)])))
     datoms))
 
-(defn mw-uuident-all-the-things
-  "tx-middleware to add uuidents to any fresh entity that didn't get one assigned during the transaction."
+(defn mw-uuid-all-the-things
+  "tx-middleware to add uuids to any fresh entity that didn't get one assigned during the transaction."
   [transact]
   (fn [report txs]
     (let [{:as report :keys [db-after tx-data]} (transact report txs)
-          uuidents (uuident-all-the-things* db-after tx-data)]
-      (transact report uuidents))))
+          uuids (uuid-all-the-things* db-after tx-data)]
+      (transact report uuids))))
 
 (defn compatability-meta [tx-meta]
   (update-in
@@ -101,7 +116,7 @@
     #(comp
        #?(:clj mw-datomic-tempid)
        (or % identity)
-       mw-uuident-all-the-things
+       mw-uuid-all-the-things
        datascript.db/schema-middleware)))
 
 ;;;
@@ -112,16 +127,16 @@
   ([db txs tx-meta]
   (case (db-kind db)
     :datascript (ds/with db txs (compatability-meta tx-meta))
-    :datomic #?(:clj (dapi/with db txs)))))
+    (:datomic :wrapped-datomic) #?(:clj (dapi/with db txs)))))
 
 (defn transact!
   ([conn txs] (transact! conn txs nil))
   ([conn txs tx-meta]
   (case (db-kind conn)
     :datascript (ds/transact! conn txs (compatability-meta tx-meta))
-
     ;; ???: does always returning the report negatively affect datomic efficiency?
-    :datomic #?(:clj @(dapi/transact conn txs)))))
+    :datomic #?(:clj @(dapi/transact conn txs))
+    :wrapped-datomic #?(:clj @(dapi/transact (:conn conn) txs)))))
 
 ;;;
 ;;; Experimental
@@ -141,7 +156,7 @@
   [conn-or-db [kw & args]]
   `(case (db-kind ~conn-or-db)
      :datascript ~(into [:db.fn/call (symbol (namespace kw) (name kw))] args)
-     :datomic ~(into [(keyword (namespace kw) (name kw))] args))))
+     (:datomic :wrapped-datomic) ~(into [(keyword (namespace kw) (name kw))] args))))
 
 (def ^{:private true} current-tempid (atom 0))
 (defn- roll!
@@ -168,3 +183,9 @@
      :datascript n
      :datomic
      #?(:clj (dapi/tempid part n)))))
+
+
+(defn conn-from-conn [conn]
+  (case (db-kind conn)
+    :datascript conn
+    (:datomic :wrapped-datomic) (DereffingDB. conn #?(:clj dapi/db :cljs nil) :wrapped-datomic)))
