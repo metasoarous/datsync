@@ -121,53 +121,8 @@
     (filter identity-gdatom?)
     (map assign-ident)))
 
-;; (defn middle-with [db tx-data {:as tx-meta :keys [datascript.db/tx-middleware]}]
-;;   {:pre [(datascript.db/db? db)]}
-;;   ;; ???: skipping filtered db check
-;;   ((if tx-middleware (tx-middleware datascript.db/transact-tx-data) datascript.db/transact-tx-data)
-;;    (datascript.db/map->TxReport
-;;      {:db-before db
-;;       :db-after  db
-;;       :tx-data   []
-;;       :tempids   {}
-;;       :tx-meta   tx-meta})
-;;    tx-data))
-
-;; (defn uuid-all-the-things* [db datoms]
-;;   (into
-;;     []
-;;     (comp
-;;       (map (fn [[eid _ _ _ _]] eid))
-;;       (distinct)
-;;       (map (partial d/entity db))
-;;       (remove :db/ident)
-;;       (remove :dat.sync/uuid)
-;;       (map (fn [{:keys [db/id]}]
-;;              [:db/add id :dat.sync/uuid (gen-uuid)])))
-;;     datoms))
-
-;; (defn uuid-all-the-things
-;;   "tx-middleware to add uuids to any fresh entity that didn't get one assigned during the transaction."
-;;   [transact]
-;;   (fn [report txs]
-;;     (let [{:as report :keys [db-after tx-data]} (transact report txs)
-;;           uuids (uuid-all-the-things* db-after tx-data)]
-;;       (transact report uuids))))
-
-;; (def ident-tx-meta
-;;   {:datascript.db/tx-middleware
-;;    (comp
-;;      d/mw-datomic-tempid
-;;      uuid-all-the-things
-;;      datascript.db/schema-middleware)})
-
 (defn ^:export snap-transact [conn {:keys [txs tx-meta]}]
-  (d/with (d/db conn) txs
-;;       (update-in (or tx-meta {})
-;;         [:datascript.db/tx-middleware]
-;;                  #(comp (or % identity)
-;;                         uuid-all-the-things))
-    ))
+  (d/with (d/db conn) txs))
 
 (defn ^:export tx-report->gdatoms [{:as seg :keys [tx-data db-after]}]
   (let [gdatoms (into [] (datom><gdatom db-after) tx-data)]
@@ -392,15 +347,9 @@
 (defn legacy-server-segment! [app seg]
   (event-msg-handler app seg))
 
-(defn ^:export could-update-schema [seg]
-  (let [seg (update-in seg
-                       [:tx-meta :datascript.db/tx-middleware]
-                       #(comp datascript.db/schema-middleware (or % identity)))]
-    seg))
-
 (defn transact-segment! [{:as knowbase :keys [conn]} {:as seg :keys [txs tx-meta]}]
   (let [report (d/transact! conn txs tx-meta)]
-    (log/info "transacting:" (d/db conn))
+;;     (log/info "transacting:" (d/db conn))
     report))
 
 ;; This is just a little glue; A system component that plugs in to pipe messages from the remote to the
@@ -497,10 +446,6 @@
              :onyx/name :dat.sync/localize
              :onyx/fn ::gdatoms->local-ds-txs
              :onyx/batch-size onyx-batch-size}
-            {:onyx/type :function
-             :onyx/name ::could-update-schema
-             :onyx/fn ::could-update-schema
-             :onyx/batch-size onyx-batch-size}
 ;;             {:onyx/type :function
 ;;              :onyx/name :dat.sync/legacy-localize-txs
 ;;              :onyx/fn ::legacy-localize-txs
@@ -515,7 +460,7 @@
 ;;             [:dat.view.dom/event :dat.sync/globalize] [:dat.sync/globalize :dat.remote/send]
             [:dat.remote/recv :dat.reactor/legacy]
             [:dat.remote/recv :dat.sync/localize] [:dat.sync/localize :dat.sync/transact]
-             [:dat.remote/recv ::could-update-schema] [::could-update-schema :dat.sync/localize]
+             [:dat.remote/recv :dat.sync/localize]
 ;;             FIXME: stop tx looping [:dat.sync/tx-report :dat.sync/handle-legacy-tx-report] [:dat.sync/handle-legacy-tx-report :dat.remote/send]
             [:dat.view.dom/event :dat.sync/snap-transact] [:dat.sync/snap-transact :dat.sync/globalize] [:dat.sync/globalize :dat.remote/send]
 ;;              [:dat.remote/recv :dat.sync/legacy-localize-txs]
@@ -528,7 +473,7 @@
              :flow/to [:dat.sync/snap-transact]
              :flow/predicate ::transaction?}
             {:flow/from :dat.remote/recv
-             :flow/to [::could-update-schema]
+             :flow/to [:dat.sync/localize]
              :flow/predicate ::snapshot?}
 ;;             {:flow/from :dat.remote/recv
 ;;              :flow/to [:dat.sync/legacy-localize-txs :dat.reactor/log]
