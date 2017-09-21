@@ -12,6 +12,8 @@
       (:require-macros [net.cgrand.macrovich :as macros]
         [dat.sync.db :refer [function call]])))
 
+;; TODO: add tools to datascript for accreting schema like attr aliasing, attr deprecation, etc. (closer to full ident support)
+
 ;;;
 ;;;
 ;;;
@@ -95,7 +97,7 @@
       (map (fn [[eid _ _ _ _]] eid))
       (distinct)
       (map (partial entity db))
-      (remove :db/ident)
+      (remove :db/ident) ;; TODO: needs to match identer being used
       (remove :dat.sync/uuid)
       (map (fn [{:keys [db/id]}]
              [:db/add id :dat.sync/uuid (gen-uuid)])))
@@ -111,7 +113,7 @@
 
 (defn compatability-meta [tx-meta]
   (update-in
-    tx-meta
+    (or tx-meta {})
     [:datascript.db/tx-middleware]
     #(comp
        #?(:clj mw-datomic-tempid)
@@ -143,7 +145,7 @@
 ;;;
 
 (defn fn-entity? [db eid]
-    (-> (d/entity db eid)
+    (-> (entity db eid)
         :db/fn
         boolean))
 
