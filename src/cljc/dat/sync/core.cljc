@@ -99,15 +99,12 @@
        [?many-enum :db/ident :db.cardinality/many]]
     db attr-ident))
 
-(defn- weird-nil-ident? [[[_ ident-value] _ _ _ _ :as datom]]
+(defn- mal-datom? [[[_ ident-value] _ _ _ _ :as datom]]
   ;; FIXME: why are there nils in some of the datoms? (maybe just one at this point)
   ;;     - the one comes from uuid-all-the-things* not assigning a uuid to the tx itself in import.clj
   ;;     - more come when there are race conditions
   ;;     - doesn't occur with datscript backend because no tx-instants and using middleware version
-  (let [weird (nil? ident-value)]
-    (when weird
-      (log/debug "weird datom" datom))
-  weird))
+  (nil? ident-value))
 
 (defn datom-identer
   "Converts all local eids to idents using the ident fn provided"
@@ -140,13 +137,12 @@
   ;; TODO: give the option to ignore, warn, remove, or error
   ;; ???: use conditions/restarts or continuations? is that even an option in clojure? hara has something for this in clojure, but not cljs I think. Is there a transducer way of doing this kind of monad like?
   (map
-    (fn [[[_ ident-value] _ _ _ _ :as datom]]
-      (if (nil? ident-value)
+    (fn [datom]
+      (when (mal-datom? datom)
         (let [exception (ex-info "Datom not assigned ident" {::datom datom})]
-          ;;       (throw exception)
-          (log/warn "nil-id-datoms:" exception)
-          datom)
-        datom))))
+          ;; (throw exception)
+          (log/warn "nil-id-datoms:" exception)))
+      datom)))
 
 (defn datom><gdatom
   "Transducer for local-datom => global-datom"
@@ -156,7 +152,8 @@
     (remove (partial d/fn-datom? db))
     (map (datom-attr-resolver db))
     (map (datom-identer db aquire-ident))
-    (handle-mal-datoms)))
+    (handle-mal-datoms)
+    (remove mal-datom?)))
 
 (defn gdatom><datom
   "Transducer for global-datom => local-datom"
@@ -188,7 +185,7 @@
   (into
     []
     (comp
-;;       (remove weird-nil-ident?)
+;;       (remove mal-datom?)
 ;;       (gdatom><datom db)
       (map #(if (identity-gdatom? %)
               (ident-datom->eid-assignment-tx %)
@@ -399,7 +396,7 @@
 
 (defn transact-segment! [{:as knowbase :keys [conn]} {:as seg :keys [txs tx-meta]}]
   (let [report (d/transact! conn txs tx-meta)]
-    (log/info "transacting:" (d/db conn))
+;;     (log/info "transacting:" (d/db conn))
     report))
 
 ;; This is just a little glue; A system component that plugs in to pipe messages from the remote to the
