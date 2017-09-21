@@ -140,9 +140,11 @@
 
 (defn ^:export gdatoms->local-ds-txs [{:as seg :keys [datoms datomses]}]
   (for [datoms (or datomses [datoms])]
-    (into seg
-      {:dat.reactor/event :dat.sync/local-txs
-       :txs (gdatoms->local-txs datoms)})))
+    (do
+      (log/debug "txacting" (vec datoms))
+      (into seg
+            {:dat.reactor/event :dat.sync/local-txs
+             :txs (gdatoms->local-txs datoms)}))))
 
 (defn ^:export split-id-datoms [{:as seg :keys [datoms]}]
   (let [local-id-assignments (filter identity-gdatom? datoms)
@@ -559,29 +561,19 @@
              :onyx/name :dat.sync/globalize
              :onyx/fn ::tx-report->gdatoms
              :onyx/batch-size onyx-batch-size}
-;;             {:onyx/type :function
-;;              :onyx/name :dat.sync/handle-legacy-tx-report
-;;              :onyx/fn ::handle-legacy-tx-report
-;;              :onyx/batch-size onyx-batch-size}
              ]
            :workflow
            [[:dat.view.dom/event :dat.reactor/legacy]
             [:dat.remote/recv :dat.reactor/legacy]
             [:dat.remote/recv ::snapshot] [::snapshot :dat.remote/send]
             [:dat.remote/recv ::split-id-datoms] [::split-id-datoms :dat.sync/localize] [:dat.sync/localize :dat.sync/transact]
-;;             [:dat.sync/tx-report :dat.sync/handle-legacy-tx-report] [:dat.sync/handle-legacy-tx-report :dat.remote/send]
             [:dat.sync/tx-report :dat.sync/globalize]
-;;             [:dat.sync/globalize :dat.remote/send] ;; ***FIXME: process tx-report
-;;             [:dat.view.dom/event :dat.sync/snap-transact] [:dat.sync/snap-transact :dat.sync/globalize]
             [:dat.sync/globalize :dat.remote/send]
             ]
            :flow-conditions
            [{:flow/from :dat.remote/recv
              :flow/to [::snapshot]
              :flow/predicate ::request-snapshot?}
-;;             {:flow/from :dat.view.dom/event
-;;              :flow/to [:dat.sync/snap-transact]
-;;              :flow/predicate ::source-from-transactor?} ;; FIXME: deprecated
             {:flow/from :dat.remote/recv
              :flow/to [::split-id-datoms]
              :flow/predicate ::localize?}

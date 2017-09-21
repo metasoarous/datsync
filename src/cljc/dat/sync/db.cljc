@@ -141,6 +141,15 @@
 ;;;
 ;;; Experimental
 ;;;
+
+(defn fn-entity? [db eid]
+    (-> (d/entity db eid)
+        :db/fn
+        boolean))
+
+(defn fn-datom? [db [eid _ _ _ _]]
+  (fn-entity? db eid))
+
 (defn datoms
   [db & args]
   (case (db-kind db)
