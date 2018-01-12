@@ -4,17 +4,18 @@
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :min-lein-version "2.0.0"
-  :dependencies [[org.clojure/clojure "1.9.0-alpha15"] ; match version needed by other dat* bits
+  :dependencies [[org.clojure/clojure "1.9.0-alpha16"]
+                 [org.clojure/clojurescript "1.9.542"]
                  [org.clojure/tools.reader "1.0.0-beta3"]
                  [org.clojure/tools.logging "0.3.1"]
-                 [org.clojure/clojurescript "1.9.293"]
+                 [clojure-future-spec "1.9.0-alpha17"]
                  [commons-codec "1.10"]
 
                  [datreactor "0.0.1-alpha1-SNAPSHOT"]
                  [datspec "0.0.1-alpha1-SNAPSHOT"]
 
                  ;; Do we need this?
-                 [org.clojure/core.async "0.2.395"]
+                 [org.clojure/core.async "0.3.442"]
                  [com.stuartsierra/component "0.3.2"]
 
                  [environ "1.1.0"]
@@ -23,6 +24,10 @@
                  [reagent "0.6.0"]
                  ;[re-frame "0.9.1"]
                  [datascript "0.15.5"]
+                 [io.replikativ/datahike "0.1.0-SNAPSHOT"]
+                 [posh "0.5.5"]
+                 [org.onyxplatform/onyx-spec "0.11.0.2"]
+                 [org.onyxplatform/onyx-local-rt "0.11.0.0"]
 
                  [com.taoensso/timbre "4.8.0"]
                  [com.taoensso/sente "1.11.0"]
@@ -48,6 +53,7 @@
   ;; Leaving this out for now
   ;:global-vars {*warn-on-reflection* true}
   :source-paths ["src/cljc" "src/clj"]
+  :clojure.spec.check-asserts true
 
   :cljsbuild {
               :builds [

@@ -4,3 +4,13 @@
 base-schema
 (load-file "src/cljc/dat/sync/core.cljc")
 (clojure.core/load-file "src/cljc/dat/sync/core.cljc")
+(in-ns 'dat.sync.db)
+(s/explain ::knowledge nil)
+(load "src/cljc/dat/sync/db.cljc")
+(load "/src/cljc/dat/sync/db.cljc")
+(load "dat/sync/db.cljc")
+(load "dat/sync/db")
+(in-ns 'dat.sync.db
+)
+(s/explain ::knowledge nil)
+(with (ds/empty-db) [])

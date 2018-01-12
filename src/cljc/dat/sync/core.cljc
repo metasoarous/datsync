@@ -19,9 +19,7 @@
 
 ;; TODO: get figwheel loading onyx compiled fns
 ;; TODO: dirty peer
-;; TODO: ios compatability (onyx uses js/eval to resolve tasks)
-;; TODO: datview onyx integration
-;; TODO: debug slf4j logging
+;; TODO: ios compatability
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; UNIFIED - treating server and client as peers
@@ -31,34 +29,34 @@
   [[[ident-attr _] attr _ _ _]]
   (= ident-attr attr))
 
-(defn- ident-query
-  "The way to get idents is currently different for datomic and datascript"
-  [db]
-  ;; TODO: datascript does not support eids as attrs and datomic does not support keywords as attrs from q
-  ;; TODO: datascript does not support keywords as eid, when in q
-  (case (d/db-kind db)
-    :datascript
+;; (defn- ident-query
+;;   "The way to get idents is currently different for datomic and datascript"
+;;   [db]
+;;   ;; TODO: datascript does not support eids as attrs and datomic does not support keywords as attrs from q
+;;   ;; TODO: datascript does not support keywords as eid, when in q
+;;   (case (d/db-kind db)
+;;     :datascript
 
-    '[:find [?ident-attr ?ident-value]
-      :in $ ?e
-      :where
-      [?e ?ident-attr ?ident-value]
-      [?ident :db/ident ?ident-attr]
-      [?ident :db/unique ?unique-identity]
-      [?unique-identity :db/ident :db.unique/identity]]
+;;     '[:find [?ident-attr ?ident-value]
+;;       :in $ ?e
+;;       :where
+;;       [?e ?ident-attr ?ident-value]
+;;       [?ident :db/ident ?ident-attr]
+;;       [?ident :db/unique ?unique-identity]
+;;       [?unique-identity :db/ident :db.unique/identity]]
 
-    (:datomic :wrapped-datomic)
-    '[:find [?ident-attr ?ident-value]
-      :in $ ?e
-      :where
-      [?e ?ident ?ident-value]
-      [?ident :db/ident ?ident-attr]
-      [?ident :db/unique :db.unique/identity]]))
+;;     (:datomic :wrapped-datomic)
+;;     '[:find [?ident-attr ?ident-value]
+;;       :in $ ?e
+;;       :where
+;;       [?e ?ident ?ident-value]
+;;       [?ident :db/ident ?ident-attr]
+;;       [?ident :db/unique :db.unique/identity]]))
 
-(defn aquire-ident
-  "Supports for all idents"
-  [db eid]
-  (d/q (ident-query db) db eid))
+;; (defn aquire-ident
+;;   "Supports for all idents"
+;;   [db eid]
+;;   (d/q (ident-query db) db eid))
 
 (defn globalize-ident
   "Only :dat.sync/uuid and :db/ident are valid idents"
@@ -144,16 +142,16 @@
           (log/warn "nil-id-datoms:" exception)))
       datom)))
 
-(defn datom><gdatom
-  "Transducer for local-datom => global-datom"
-  [db]
-  ;; TODO: tx needs to be globalized and localized in some way. datascript does not resolve idents in the tx position. Even if it did that still may not be the right way to store them. We need some kind of vector clock.
-  (comp
-    (remove (partial d/fn-datom? db))
-    (map (datom-attr-resolver db))
-    (map (datom-identer db aquire-ident))
-    (handle-mal-datoms)
-    (remove mal-datom?)))
+;; (defn datom><gdatom
+;;   "Transducer for local-datom => global-datom"
+;;   [db]
+;;   ;; TODO: tx needs to be globalized and localized in some way. datascript does not resolve idents in the tx position. Even if it did that still may not be the right way to store them. We need some kind of vector clock.
+;;   (comp
+;;     (remove (partial d/fn-datom? db))
+;;     (map (datom-attr-resolver db))
+;;     (map (datom-identer db aquire-ident))
+;;     (handle-mal-datoms)
+;;     (remove mal-datom?)))
 
 (defn gdatom><datom
   "Transducer for global-datom => local-datom"
@@ -174,12 +172,17 @@
   [conn {:keys [txs tx-meta]}]
   (d/with (d/db conn) txs tx-meta))
 
-(defn ^:export tx-report->gdatoms
-  [{:as seg :keys [tx-data db-after]}]
-  (let [gdatoms (into [] (datom><gdatom db-after) tx-data)]
-;;   (log/info "tx-report->gdatoms" gdatoms)
-  {:dat.reactor/event :dat.sync/gdatoms
-   :datoms gdatoms}))
+;; (defn ^:export tx-report->gdatoms
+;;   [{:as seg :keys [tx-data db-after]}]
+;;   (let [gdatoms (into [] (datom><gdatom db-after) tx-data)]
+;; ;;   (log/info "tx-report->gdatoms" gdatoms)
+;;   {:dat.reactor/event :dat.sync/gdatoms
+;;    :datoms gdatoms}))
+
+(defn ^:export tx-report->gtxs [{:as seg :keys [tx-data db-after]}]
+  (log/info "tx-report->gtxs" (d/datoms->snapshot tx-data))
+  {:dat.reactor/event :dat.sync/gtxs
+   :gtxs (d/datoms->snapshot tx-data)})
 
 (defn gdatoms->local-txs [gdatoms]
   (into
@@ -192,56 +195,56 @@
               (datom->tx %))))
     gdatoms))
 
-(defn ^:export gdatoms->local-ds-txs [{:as seg :keys [datoms datomses]}]
-  (for [datoms (or datomses [datoms])]
-    (let [local-txs (gdatoms->local-txs datoms)]
-;;       (log/debug "txacting datoms" datoms)
-      (log/debug "txacting" local-txs)
-      (into seg
-            {:dat.reactor/event :dat.sync/local-txs
-             :txs (gdatoms->local-txs datoms)}))))
+;; (defn ^:export gdatoms->local-ds-txs [{:as seg :keys [datoms datomses]}]
+;;   (for [datoms (or datomses [datoms])]
+;;     (let [local-txs (gdatoms->local-txs datoms)]
+;; ;;       (log/debug "txacting datoms" datoms)
+;;       (log/debug "txacting" local-txs)
+;;       (into seg
+;;             {:dat.reactor/event :dat.sync/local-txs
+;;              :txs (gdatoms->local-txs datoms)}))))
 
-(defn ^:export split-id-datoms [{:as seg :keys [datoms]}]
-  (let [local-id-assignments (filter identity-gdatom? datoms)
-        other-datoms (remove identity-gdatom? datoms)]
-    ;; ***FIXME: this is a hack. I thought we would only need to do this for the snapshot, but it appears to be an all the time problem. Is it even safe to split the transaction like this? Can we build a datomic fn that removes the need for this?
-    (assoc
-      seg
-      :datoms nil
-      :datomses [local-id-assignments other-datoms])))
+;; (defn ^:export split-id-datoms [{:as seg :keys [datoms]}]
+;;   (let [local-id-assignments (filter identity-gdatom? datoms)
+;;         other-datoms (remove identity-gdatom? datoms)]
+;;     ;; ***FIXME: this is a hack. I thought we would only need to do this for the snapshot, but it appears to be an all the time problem. Is it even safe to split the transaction like this? Can we build a datomic fn that removes the need for this?
+;;     (assoc
+;;       seg
+;;       :datoms nil
+;;       :datomses [local-id-assignments other-datoms])))
 
-(defn datom-has-ident? [db [e _ _ _ _]]
-  (-> (d/entity db e)
-      :db/ident
-      boolean))
+;; (defn datom-has-ident? [db [e _ _ _ _]]
+;;   (-> (d/entity db e)
+;;       :db/ident
+;;       boolean))
 
-(defn core-schema-datom? [[_ attr _ _ _]]
-  (#{:db/cardinality :db/unique :db/valueType} attr))
+;; (defn core-schema-datom? [[_ attr _ _ _]]
+;;   (#{:db/cardinality :db/unique :db/valueType} attr))
 
-(defn safe-gdatom-grouping [db datoms]
-  ;; ???: should we be doing it this way or conforming at every peer not just the server
-  (let [{:keys [id-assignments core-schema extended-schema normies]}
-        (group-by
-          #(cond
-             (identity-gdatom? %) :id-assignments
-             (core-schema-datom? %) :core-schema
-             (datom-has-ident? db %) :extended-schema
-             :else :normies)
-          datoms)]
-    [id-assignments core-schema extended-schema normies]))
+;; (defn safe-gdatom-grouping [db datoms]
+;;   ;; ???: should we be doing it this way or conforming at every peer not just the server
+;;   (let [{:keys [id-assignments core-schema extended-schema normies]}
+;;         (group-by
+;;           #(cond
+;;              (identity-gdatom? %) :id-assignments
+;;              (core-schema-datom? %) :core-schema
+;;              (datom-has-ident? db %) :extended-schema
+;;              :else :normies)
+;;           datoms)]
+;;     [id-assignments core-schema extended-schema normies]))
 
-(defn snapshot [{:as knowbase :keys [conn]}
-                {:as event-msg :keys [dat.remote/peer-id]}]
-  (log/info "Sending bootstrap message" peer-id)
-  (let [db @conn
-        gdatoms (into [] (datom><gdatom db) (d/datoms db :eavt))
-        seg {:dat.remote/peer-id peer-id
-             :dat.reactor/event :dat.sync/gdatoms
-             :dat.sync/snapshot true
-             :datomses (safe-gdatom-grouping db gdatoms)}]
-    ;; ???: batching for large data sets?
-;;     (log/debug "snap!!!" seg)
-    seg))
+;; (defn snapshot [{:as knowbase :keys [conn]}
+;;                 {:as event-msg :keys [dat.remote/peer-id]}]
+;;   (log/info "Sending bootstrap message" peer-id)
+;;   (let [db @conn
+;;         gdatoms (into [] (datom><gdatom db) (d/datoms db :eavt))
+;;         seg {:dat.remote/peer-id peer-id
+;;              :dat.reactor/event :dat.sync/gdatoms
+;;              :dat.sync/snapshot true
+;;              :datomses (safe-gdatom-grouping db gdatoms)}]
+;;     ;; ???: batching for large data sets?
+;; ;;     (log/debug "snap!!!" seg)
+;;     seg))
 
 ;;
 ;; ## Dataflow predicates
@@ -345,10 +348,10 @@
 (defmethod event-msg-handler :dat.sync.client/bootstrap
   ;; What is send-fn here? Does that wrap the uid for us? (0.o)
   [{:as app :keys [knowbase remote datom-api]} {:as event-msg :keys [dat.remote/peer-id]}]
-  (let [bootstrap (snapshot knowbase event-msg)]
-      (async/put!
-        (protocols/send-chan remote)
-        bootstrap))))
+  (let [bootstrap (d/db->snapshot @knowbase)]
+    (async/put!
+      (protocols/send-chan remote)
+      (assoc bootstrap :dat.remote/peer-id peer-id)))))
 
 ;; Fallback handler; should send message saying I don't know what you mean
 (defmethod event-msg-handler :default ; Fallback
@@ -499,7 +502,7 @@
 ;;              :onyx/batch-size onyx-batch-size}
             {:onyx/type :function
              :onyx/name :dat.sync/globalize
-             :onyx/fn ::tx-report->gdatoms
+             :onyx/fn ::tx-report->gtxs
              :onyx/batch-size onyx-batch-size}
              ]
          :workflow
@@ -606,7 +609,7 @@
              :onyx/batch-size onyx-batch-size}
             {:onyx/type :function
              :onyx/name :dat.sync/globalize
-             :onyx/fn ::tx-report->gdatoms
+             :onyx/fn ::tx-report->gtxs
              :onyx/batch-size onyx-batch-size}
              ]
            :workflow
