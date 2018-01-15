@@ -70,6 +70,9 @@
            (d/listen! conn ::persist (db-persister url))))
      conn)))
 
+(defn destroy-conn! [conn]
+  (ds/unlisten! conn ::persist))
+
 (defn empty-db []
   (-> 
     (ds-pr/schema-db)
