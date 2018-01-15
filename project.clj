@@ -32,6 +32,7 @@
                  [com.taoensso/timbre "4.8.0"]
                  [com.taoensso/sente "1.11.0"]
                  [com.taoensso/encore "2.88.2"]
+                 [com.taoensso/nippy "2.13.0"]
                  [com.cognitect/transit-clj "0.8.297"]
                  [com.cognitect/transit-cljs "0.8.239"]
 

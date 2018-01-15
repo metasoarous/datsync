@@ -4,15 +4,18 @@
     [dat.sync.db :as db]
     [datascript.core :as d]
     [dat.sync.datascript-pr :as ds-pr]
-
     [datascript.db]
     [com.rpl.specter :as specter]
     [dat.spec.utils :refer [deep-merge cat-into]]
     [onyx.static.util :refer [kw->fn]]
+    #?(:clj [taoensso.nippy :as nippy])
+    #?(:clj [clojure.java.io :as io])
     #?(:clj [net.cgrand.macrovich :as macros]))
   #?(:cljs
       (:require-macros [net.cgrand.macrovich :as macros]
-                       [dat.sync.db.datascript :refer [function]])))
+                       [dat.sync.db.datascript :refer [function]])
+     :clj
+      (:import [java.io DataInputStream DataOutputStream])))
 
 (defmethod db/conn? ::conn [{:keys [dat.sync.db/conn]}]
   (d/conn? conn))
@@ -35,15 +38,37 @@
    :dat.sync.db/transact! #(ds-pr/transact! %1 %2 ds-pr/schema-meta)
    :dat.sync.db/kind ::conn})
 
+#?(:clj
+(defn db-persister [url]
+;;   (log/debug "nippy freezing")
+  (fn [{:as report :keys [db-after]}]
+    (with-open [out (clojure.java.io/output-stream url)]
+        (nippy/freeze-to-out! (DataOutputStream. out) {:datoms (d/datoms db-after :eavt)
+                                                       :schema (:schema db-after)})))))
+
 (defn create-conn! 
   ([] (create-conn! nil))
-  ([url & {:as options :keys [keep?] :or {keep? false}}]
-   (when keep?
-     nil ;; TODO persistent datascript
-     )
-   (-> 
-     (ds-pr/create-schema-conn)
-     (db/inject-conn-api conn-api))))
+  ([url & {:as options :keys [keep? persistent] :or {keep? false persistent false}}]
+   (let [conn-from-storage 
+         #?(:clj
+             (when persistent 
+               (when keep?
+                 (try
+                   (with-open [in (io/input-stream url)]
+                     (let [{:keys [datoms schema]} (nippy/thaw-from-in! (DataInputStream. in))]
+                       (when datoms
+                         (log/debug "nippy thawing")
+                         (d/conn-from-datoms datoms schema))))
+                   (catch Exception e)))))
+         conn (or 
+                conn-from-storage 
+                (-> 
+                  (ds-pr/create-schema-conn)
+                  (db/inject-conn-api conn-api)))]
+     #?(:clj
+         (when persistent
+           (d/listen! conn ::persist (db-persister url))))
+     conn)))
 
 (defn empty-db []
   (-> 
