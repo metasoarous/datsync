@@ -3,3 +3,4 @@ pom.xml
 *.iml
 checkouts
 node_modules
+resources/public/js/compiled
