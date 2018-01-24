@@ -1,1 +1,0 @@
-{"version":3,"file":"\/home\/bamarco\/dev\/datsync\/out\/onyx\/peer\/operation.js","sources":["operation.cljc"],"lineCount":13,"mappings":";AAAA;;;;AA2BA,iCAAA,jCAAMA,0EAAYC;AAAlB,AACE,OAACC,sCAAO,AAAA,uFAAUD;;AAEpB,6CAAA,7CAAME,kGAAkBC;AAAxB,AAAA","names":["onyx.peer.operation\/resolve-fn","task-map","onyx.static.util\/kw->fn","onyx.peer.operation\/start-lifecycle?","event"]}
