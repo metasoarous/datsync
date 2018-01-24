@@ -64,6 +64,7 @@
                          :assert false
                          :compiler {:asset-path    "js/compiled/out"
                                     :output-to     "resources/public/js/compiled/datsync.bare.js"
+                                    :output-dir    "resources/public/js/compiled/out"
                                     :optimizations :advanced
                                     :pretty-print  false
                                     :elide-asserts true
@@ -72,7 +73,8 @@
                         {:id "test"
                          :source-paths ["src/cljs" "test/cljs" "src/cljc" "test/cljc"]
                          :compiler {:asset-path "js/compiled/test"
-                                    :output-to "resources/public/js/compiled/testable.js"
+                                    :output-to  "resources/public/js/compiled/testable.js"
+                                    :output-dir "resources/public/js/compiled/test"
                                     :main dat.sync.test.runner
                                     ;;                            :target :nodejs
                                     :optimizations :none}}]}
@@ -88,36 +90,32 @@
                              [lein-cljsbuild "1.1.2"]
                              [lein-typed "0.3.5"]]
 
-                   :cljsbuild {
-                               :builds [
-                                        { :id "advanced"
-                                          :source-paths ["src/cljc" "src/cljs" "test"]
-                                          :compiler {:asset-path    "js/compiled/out"
-                                                     :output-to     "resources/public/js/compiled/datsync.js"
-                                                     :output-dir    "resources/public/js/compiled/advanced"
-                                                     :optimizations :advanced
-                                                     :source-map    "target/datsync.js.map"
-                                                     :pretty-print  true
-                                                     :recompile-dependents false
-                                                     :parallel-build true}}
+;;                    :cljsbuild {
+;;                                :builds [
+;;                                         { :id "advanced"
+;;                                           :source-paths ["src/cljc" "src/cljs" "test"]
+;;                                           :compiler {:asset-path    "js/compiled/out"
+;;                                                      :output-to     "resources/public/js/compiled/datsync.js"
+;;                                                      :output-dir    "resources/public/js/compiled/advanced"
+;;                                                      :optimizations :advanced
+;;                                                      :source-map    "target/datsync.js.map"
+;;                                                      :pretty-print  true
+;;                                                      :recompile-dependents false
+;;                                                      :parallel-build true}}
 
-                                        { :id "none"
-                                          :source-paths ["src/cljc" "src/cljs" "test" "dev"]
-                                          :compiler {:asset-path    "js/compiled/out"
-                                                     :main          datsync.test
-                                                     :output-to     "resources/public/js/compiled/datsync.js"
-                                                     :output-dir    "resources/public/js/compiled/none"
-                                                     :optimizations :none
-                                                     :source-map    true
-                                                     :recompile-dependents false
-                                                     :parallel-build true}}]}
+;;                                         { :id "none"
+;;                                           :source-paths ["src/cljc" "src/cljs" "test" "dev"]
+;;                                           :compiler {:asset-path    "js/compiled/out"
+;;                                                      :main          datsync.test
+;;                                                      :output-to     "resources/public/js/compiled/datsync.js"
+;;                                                      :output-dir    "resources/public/js/compiled/none"
+;;                                                      :optimizations :none
+;;                                                      :source-map    true
+;;                                                      :recompile-dependents false
+;;                                                      :parallel-build true}}]}
                     }}
 
-  :clean-targets ^{:protect false} [
-                                    "target"
-                                    "release-js/datsync.bare.js"
-                                    "release-js/datsync.js"
-                                    "resources/public/js/compiled"]
+  :clean-targets ^{:protect false} [:target-path :compile-path "resources/public/js"]
 
   ;; ## Back to from extraction...
   ;; =============================
@@ -127,7 +125,6 @@
                ;:check-cljs []}
   ;; Not sure if we need these either
   :resource-paths ["resources" "resources-index/prod"]
-  :target-path "target/%s"
   :aliases {"package"
             ["with-profile" "prod" "do"
              "clean" ["cljsbuild" "once"]]})
