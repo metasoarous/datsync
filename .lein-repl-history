@@ -14,3 +14,6 @@ base-schema
 )
 (s/explain ::knowledge nil)
 (with (ds/empty-db) [])
+(sequential? nil)
+(meta defn)
+(meta +)

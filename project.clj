@@ -54,6 +54,7 @@
   ;; Leaving this out for now
   ;:global-vars {*warn-on-reflection* true}
   :source-paths ["src/cljc" "src/clj"]
+  :test-paths   ["test/cljc" "test/clj"]
   :clojure.spec.check-asserts true
 
   :cljsbuild {
@@ -67,13 +68,22 @@
                                     :pretty-print  false
                                     :elide-asserts true
                                     :output-wrapper false
-                                    :parallel-build true}}]}
+                                    :parallel-build true}}
+                        {:id "test"
+                         :source-paths ["src/cljs" "test/cljs" "src/cljc" "test/cljc"]
+                         :compiler {:output-to "resources/public/js/compiled/testable.js"
+                                    :main dat.sync.test.runner
+                                    ;;                            :target :nodejs
+                                    :optimizations :none}}]}
         ;:notify-command ["release-js/wrap_bare.sh"]
+  
+  :doo {:build "test"
+        :alias {:default [:chrome-headless]}}
 
   :profiles {
              :dev {
                    :source-paths ["test" "dev" "src"]
-                   :plugins [
+                   :plugins [[lein-doo "0.1.8"]
                              [lein-cljsbuild "1.1.2"]
                              [lein-typed "0.3.5"]]
 

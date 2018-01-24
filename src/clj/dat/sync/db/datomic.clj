@@ -30,8 +30,8 @@
    :dat.sync.db/transact! (comp deref d/transact)
    :dat.sync.db/kind      ::conn})
 
-(defn create-conn! 
-  ([] (create-conn! "datomic:mem://base"))
+(defn create-conn 
+  ([] (create-conn "datomic:mem://base"))
   ([url & {:as options :keys [keep?] :or {keep? false}}]
    (when-not keep? 
      (d/delete-database url))
