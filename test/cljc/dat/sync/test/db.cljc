@@ -176,15 +176,22 @@
     (d/db-with [{:db/ident ::test-fn
                  :db/fn test-fn}
                 {:db/ident ::indirection
-                 :db/fn indirection}])))
+                 :db/fn indirection}
+                {:db/ident ::local-call
+                 :db/fn local-call}])))
 
 (defn test-function-indirection [db]
-  (let [db (with-fns db)]
-    (is (= "Test Name"
+  (let [db (with-fns db)
+        test-name "Jimmy"]
+    (is (= test-name
            (-> db
-               with-fns
-               (d/db-with [[::indirection "Test Name"]])
-               (d/entity [::name "Test Name"])
+               (d/db-with [[::indirection test-name]])
+               (d/entity [::name test-name])
+               ::name)))
+    (is (= test-name
+           (-> db
+               (d/db-with [[::local-call test-name]])
+               (d/entity [::name test-name])
                ::name)))))
 
 (deftest test-function-indirection-datascript
