@@ -19,6 +19,7 @@
 ;; By speccing things out first, we will get:
 
 ;; * query parsing for free, via s/conform
+;; * a clear conceptual model of what a query is and how we interpet it, via above
 ;; * path towards generative testing
 ;; * profit
 
@@ -26,6 +27,23 @@
 ;; operation.
 ;; This pushes all resolution to underlying storage out to the implementation functions for the input/output nodes of
 ;; the onyx topology.
+;; Letting us write beautiful, sweet, high-level, pure data representation processing code in order to implement most of
+;; the important logic.
+
+;; At the very end I tinker a little in the direction of speccing out the Generic Join processing model for
+;; planning queries, based on intellectual scraps of Eve's brilliant work.
+;; I'm not sure how perfectly this will pair with the particular differential evaluation methods we're looking
+;; at, but I suspsect it should be susceptible.
+
+;; It may howerver be better to initially assume a simpler  model (which I think both Datomic and DataScript
+;; still maintain), which assumes that the user need to figure out how to order the relations to reduce the
+;; work most significantly.
+;; But generic join is so simple that layering on top of a basic implementation using some simple relational
+;; summary statistics should be pretty easy.
+;; So room for growth at least.
+
+;; Again, this was all some fun sketching I did on the plane ride back to Seattle.
+;; It's very rough and in need of cleanup, so feel free to muck around as a basis for whatever.
 
 
 
