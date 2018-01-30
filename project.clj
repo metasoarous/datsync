@@ -4,7 +4,8 @@
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :min-lein-version "2.0.0"
-  :dependencies [[org.clojure/clojure "1.9.0-alpha15"] ; match version needed by other dat* bits
+  :dependencies [[org.clojure/clojure "1.9.0"] ; match version needed by other dat* bits
+                 [clojure-future-spec "1.9.0-alpha17"]
                  [org.clojure/tools.reader "1.0.0-beta3"]
                  [org.clojure/tools.logging "0.3.1"]
                  [org.clojure/clojurescript "1.9.293"]
@@ -38,7 +39,9 @@
                  [net.cgrand/macrovich "0.2.0"]
 ;;                  [io.rkn/conformity "0.4.0"]
                  [com.rpl/specter "0.13.2"]
-                 [prismatic/plumbing "0.5.3"]]
+                 [prismatic/plumbing "0.5.3"]
+                 [org.clojure/test.check "0.9.0"]]
+
 
   ;; ## Snipped from DataScript's
   ;; ============================
