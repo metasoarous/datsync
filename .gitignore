@@ -4,3 +4,5 @@ pom.xml
 checkouts
 .lein-repl-history
 *.swo
+node_modules
+resources/public/js/compiled
