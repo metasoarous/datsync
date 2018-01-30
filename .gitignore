@@ -2,3 +2,5 @@ target
 pom.xml
 *.iml
 checkouts
+.lein-repl-history
+*.swo
