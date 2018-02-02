@@ -4,11 +4,6 @@
    [datascript.core :as ds]
    [clojure.spec.alpha :as s]
    #?(:clj [datomic.api :as da])))
-  ; #?(:clj [net.cgrand.macrovich :as macros])))
-  ; #?(:cljs
-  ;    (:require-macros [net.cgrand.macrovich :as macros]
-  ;                     [dat.sync.db :refer [function def-dbfn]])))
-                      
 
 (s/def ::kind keyword?)
 
@@ -113,28 +108,6 @@
 
     :else
     (throw (ex-info "Could not destructure fn args" {:args args}))))
-
-(comment
-  "These macros fail when trying to use q and pull from the transaction function"
-
-  (macros/deftime
-    (defmacro function
-      "For cljs your requires should match your ns. You can have less requires, but not different"
-      [{:as form :keys [params code]}]
-      `(macros/case
-        :cljs (fn ~params ~code)
-        :clj (da/function '~form)))
-
-    (defmacro def-dbfn
-      ""
-      [sym & args]
-      (let [{:keys [requires params doc body]} (destructure-fn-args args)]
-        `(def ~sym
-          (function
-            {:lang "clojure"
-             :requires ~requires
-             :params ~params
-             :code ~@body}))))))
 
 (defn dbfn-with-api [f db-api]
   (fn [db & args]
