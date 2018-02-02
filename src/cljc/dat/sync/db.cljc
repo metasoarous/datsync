@@ -1,13 +1,13 @@
 (ns dat.sync.db
   (:require
-    [taoensso.timbre :as log :include-macros true]
-    [datascript.core :as ds]
-    [clojure.spec.alpha :as s]
-    #?(:clj [datomic.api :as da])
-    #?(:clj [net.cgrand.macrovich :as macros]))
-   #?(:cljs
-      (:require-macros [net.cgrand.macrovich :as macros]
-                       [dat.sync.db :refer [function def-dbfn]])))
+   [taoensso.timbre :as log :include-macros true]
+   [datascript.core :as ds]
+   [clojure.spec.alpha :as s]
+   #?(:clj [datomic.api :as da])
+   #?(:clj [net.cgrand.macrovich :as macros]))
+  #?(:cljs
+     (:require-macros [net.cgrand.macrovich :as macros]
+                      [dat.sync.db :refer [function def-dbfn]])))
 
 (s/def ::kind keyword?)
 
@@ -29,10 +29,9 @@
 
 (s/def ::SYNC (s/or ::DB ::CONN))
 
-
 (defmulti conn? ::kind)
 (defmulti db?   ::kind)
-(defn sync? [dat-sync-db-or-conn] 
+(defn sync? [dat-sync-db-or-conn]
   (s/valid? ::SYNC dat-sync-db-or-conn))
 
 (defn inject-db-api [db api]
@@ -100,38 +99,44 @@
 
     (sequential? (second args))
     (into
-      {:params (second args)
-       :body   (drop 2 args)}
-      (if (string? (first args)) {:doc (first args)} (first args)))
+     {:params (second args)
+      :body   (drop 2 args)}
+     (if (string? (first args)) {:doc (first args)} (first args)))
 
     (sequential? (nth args 2))
     (into
-      {:doc (first args)
-       :params (nth args 2)
-       :body (drop 3 args)}
-      (second args))
-    
-    :else 
+     {:doc (first args)
+      :params (nth args 2)
+      :body (drop 3 args)}
+     (second args))
+
+    :else
     (throw (ex-info "Could not destructure fn args" {:args args}))))
 
 (macros/deftime
-(defmacro function
-  "For cljs your requires should match your ns. You can have less requires, but not different"
-  [{:as form :keys [params code]}]
-  `(macros/case
-     :cljs (fn ~params ~code)
-     :clj ;;(fn ~params ~code)
-     (da/function '~form)))
+  (defmacro function
+    "For cljs your requires should match your ns. You can have less requires, but not different"
+    [{:as form :keys [params code]}]
+    `(macros/case
+      :cljs (fn ~params ~code)
+      :clj (da/function '~form)))
 
-(defmacro def-dbfn
-  ""
-  [sym & args]
-  (let [{:keys [requires params doc body]} (destructure-fn-args args)]
-    `(def ~sym
-    (function
-      {:lang "clojure"
-       :requires ~requires
-       :params ~params
-       :code ~@body}))
-    )))
+  (defmacro def-dbfn
+    ""
+    [sym & args]
+    (let [{:keys [requires params doc body]} (destructure-fn-args args)]
+      `(def ~sym
+         (function
+          {:lang "clojure"
+           :requires ~requires
+           :params ~params
+           :code ~@body})))))
+
+(defn test-reg2 [db n]
+  (prn "n is" n)
+  nil)
+
+(defn dbfn-with-api [f db-api]
+  (fn [db & args]
+    (apply f (inject-db-api db db-api) args)))
 

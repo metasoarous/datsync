@@ -9,9 +9,13 @@
     [dat.spec.utils :refer [deep-merge cat-into]]
     [onyx.static.util :refer [kw->fn]]
     #?(:clj [taoensso.nippy :as nippy])
-    #?(:clj [clojure.java.io :as io]))
+    #?(:clj [clojure.java.io :as io])
+    #?(:clj [net.cgrand.macrovich :as macros]))
   #?(:clj
-      (:import [java.io DataInputStream DataOutputStream])))
+      (:import [java.io DataInputStream DataOutputStream])
+     :cljs
+      (:require-macros [net.cgrand.macrovich :as macros]
+                       [dat.sync.db.datascript :refer [reg-dbfn!]])))
 
 (def db-ops #{:db/add :db/retract :db/retractEntity :db/retractAttribute :db/cas})
 
@@ -412,3 +416,10 @@
   (doseq [tx [verify-core verify-core-schema]]
     (log/info "verifying" conn)
     (ds-pr/transact! conn tx)))
+
+(macros/deftime
+  (defmacro reg-dbfn! [conn {:keys [f params]}]
+    `(db/transact!
+        ~conn
+        [{:db/fn (dat.sync.db/dbfn-with-api ~(symbol (namespace f) (name f)) db-api)
+          :db/ident ~(keyword (namespace f) (name f))}])))

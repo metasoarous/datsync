@@ -19,10 +19,26 @@
 ;;       - who choses global names?
 ;;       - attached to instance vs attached to conn 
 
+
 ;; TODO: dispatch something
+#?(:clj
 (deftest test-server
-  (let [server (dat.sync/new-datsync-server)]
-    (is true)))
+  (let [;;server (dat.sync/new-datsync-server {:knowbase })
+        reactor (oreactor/new-onyx-reactor)
+        ]
+;;     (oreactor/expand-job! 
+;;       reactor 
+;;       ::job
+;;       {:catalog 
+;;        []
+;;        :workflow []
+;;        :flow-conditions []
+;;        })
+                          
+    
+    ; (sim/submit-job peer-config job)
+    
+    (is true))))
 
 ;; TODO: test globalization
 ;; (deftest test-conform

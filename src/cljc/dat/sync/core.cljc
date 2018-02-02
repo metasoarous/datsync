@@ -634,8 +634,10 @@
   (stop [component]
     (assoc component :conn nil)))
 
-(defn new-datsync-client []
-  (map->DatsyncClient {}))
+(defn new-datsync-client 
+  ([] (new-datsync-client {}))
+  ([options]
+  (map->DatsyncClient options)))
 
 (defrecord DatsyncServer [dispatcher remote knowbase reactor]
   component/Lifecycle
@@ -716,6 +718,8 @@
   (stop [component]
     component))
 
-(defn new-datsync-server []
-  (map->DatsyncServer {}))
+(defn new-datsync-server 
+  ([] (new-datsync-server {}))
+  ([options]
+  (map->DatsyncServer options)))
 

@@ -1,16 +1,16 @@
 (ns dat.sync.db.datomic
   (:require
-    [taoensso.timbre :as log]
-    [dat.sync.db :as db]
-    [datomic.api :as d]))
+   [taoensso.timbre :as log]
+   [dat.sync.db :as db]
+   [datomic.api :as d]))
 
-(defmethod db/conn? ::conn [{:keys [dat.sync.db/conn]}] 
+(defmethod db/conn? ::conn [{:keys [dat.sync.db/conn]}]
   (isa? (type conn) datomic.Connection))
 
 (defmethod db/db? ::db [{:keys [dat.sync.db/db]}]
   (isa? (type db) datomic.db.Db))
 
-(def ^:private empty-conn 
+(def ^:private empty-conn
   (let [url "datomic:mem://e9a192dc-9cde-45c6-8cdb-e89afdfb5529"]
     (d/create-database url)
     (d/connect url)))
@@ -30,10 +30,10 @@
    :dat.sync.db/transact! (comp deref d/transact)
    :dat.sync.db/kind      ::conn})
 
-(defn create-conn 
+(defn create-conn
   ([] (create-conn "datomic:mem://base"))
   ([url & {:as options :keys [keep?] :or {keep? false}}]
-   (when-not keep? 
+   (when-not keep?
      (d/delete-database url))
    (d/create-database url)
    (-> (d/connect url)
@@ -43,3 +43,17 @@
   (-> empty-conn
       d/db
       (db/inject-db-api db-api)))
+
+(defmacro reg-dbfn! [conn {:keys [f params requires]}]
+  `(db/transact!
+    ~conn
+    [{:db/fn (d/function
+               '{:lang "clojure"
+                 :params ~params
+                 :requires ~(into
+                             [['dat.sync.db]
+                              ['dat.sync.db.datomic]
+                              [(symbol (namespace f))]]
+                              requires)
+                 :code   (apply (dat.sync.db/dbfn-with-api ~(symbol (namespace f) (name f)) dat.sync.db.datomic/db-api) ~params)})
+      :db/ident ~(keyword (namespace f) (name f))}]))
