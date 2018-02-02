@@ -15,7 +15,7 @@
       (:import [java.io DataInputStream DataOutputStream])
      :cljs
       (:require-macros [net.cgrand.macrovich :as macros]
-                       [dat.sync.db.datascript :refer [reg-dbfn!]])))
+                       [dat.sync.db.datascript :refer [install-dbfn!]])))
 
 (def db-ops #{:db/add :db/retract :db/retractEntity :db/retractAttribute :db/cas})
 
@@ -74,12 +74,12 @@
    :dat.sync.db/kind ::conn})
 
 #?(:clj
-(defn db-persister [url]
+   (defn db-persister [url]
 ;;   (log/debug "nippy freezing")
-  (fn [{:as report :keys [db-after]}]
-    (with-open [out (clojure.java.io/output-stream url)]
-        (nippy/freeze-to-out! (DataOutputStream. out) {:datoms (d/datoms db-after :eavt)
-                                                       :schema (:schema db-after)})))))
+     (fn [{:as report :keys [db-after]}]
+       (with-open [out (clojure.java.io/output-stream url)]
+           (nippy/freeze-to-out! (DataOutputStream. out) {:datoms (d/datoms db-after :eavt)
+                                                          :schema (:schema db-after)})))))
 
 (defn create-conn
   ([] (create-conn nil))
@@ -123,9 +123,9 @@
   (log/debug "kw-calling...")
   [(into
      [:db.fn/call
-      (kw->fn f-ident)
+      (kw->fn f-ident)]
       ;;(:db/fn (ds-pr/entity db f-ident))
-      ]
+      
      args)])
 
 (defn call-vec [& args]
@@ -418,7 +418,7 @@
     (ds-pr/transact! conn tx)))
 
 (macros/deftime
-  (defmacro reg-dbfn! [conn {:keys [f params]}]
+  (defmacro install-dbfn! [conn {:keys [f params]}]
     `(db/transact!
         ~conn
         [{:db/fn (dat.sync.db/dbfn-with-api ~(symbol (namespace f) (name f)) db-api)

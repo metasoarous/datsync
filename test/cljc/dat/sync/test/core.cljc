@@ -9,8 +9,8 @@
     [clojure.spec.alpha :as s]
     ;;      #?(:cljs [cljs.test    :as t :refer-macros [is are deftest testing]]
     ;;        :clj  [clojure.test :as t :refer        [is are deftest testing]])
-    [clojure.test :as t :refer [is are deftest testing]]
-    ))
+    [clojure.test :as t :refer [is are deftest testing]]))
+    
 
 ;; ???: onyx-sim testing first?
 
@@ -22,10 +22,10 @@
 
 ;; TODO: dispatch something
 #?(:clj
-(deftest test-server
-  (let [;;server (dat.sync/new-datsync-server {:knowbase })
-        reactor (oreactor/new-onyx-reactor)
-        ]
+   (deftest test-server
+     (let [;;server (dat.sync/new-datsync-server {:knowbase })
+           reactor (oreactor/new-onyx-reactor)]
+        
 ;;     (oreactor/expand-job! 
 ;;       reactor 
 ;;       ::job
@@ -38,7 +38,7 @@
     
     ; (sim/submit-job peer-config job)
     
-    (is true))))
+       (is true))))
 
 ;; TODO: test globalization
 ;; (deftest test-conform

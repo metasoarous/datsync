@@ -7,8 +7,8 @@
     [dat.sync.datascript-pr :as ds-pr]
     #?(:clj [net.cgrand.macrovich :as macros]))
   #?(:cljs
-    (:require-macros [net.cgrand.macrovich :as macros]
-                     [dat.sync.db.datahike :refer [reg-dbfn!]])))
+     (:require-macros [net.cgrand.macrovich :as macros]
+                      [dat.sync.db.datahike :refer [install-dbfn!]])))
 
 (def db-ops #{:db/add :db/retract :db/retractEntity :db/retractAttribute :db/cas})
 
@@ -70,8 +70,8 @@
   ([] (create-conn nil))
   ([url & {:as options :keys [keep?] :or {keep? false}}]
    (when keep?
-     nil ;; TODO persistent datahike
-     )
+     nil) ;; TODO persistent datahike
+     
    (-> 
      (mw/create-schema-conn)
      (db/inject-conn-api conn-api))))
@@ -82,7 +82,7 @@
     (db/inject-db-api db-api)))
 
 (macros/deftime
-  (defmacro reg-dbfn! [conn {:keys [f params]}]
+  (defmacro install-dbfn! [conn {:keys [f params]}]
     `(db/transact!
         ~conn
         [{:db/fn (dat.sync.db/dbfn-with-api ~(symbol (namespace f) (name f)) db-api)

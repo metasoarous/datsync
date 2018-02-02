@@ -3,11 +3,12 @@
    [taoensso.timbre :as log :include-macros true]
    [datascript.core :as ds]
    [clojure.spec.alpha :as s]
-   #?(:clj [datomic.api :as da])
-   #?(:clj [net.cgrand.macrovich :as macros]))
-  #?(:cljs
-     (:require-macros [net.cgrand.macrovich :as macros]
-                      [dat.sync.db :refer [function def-dbfn]])))
+   #?(:clj [datomic.api :as da])))
+  ; #?(:clj [net.cgrand.macrovich :as macros])))
+  ; #?(:cljs
+  ;    (:require-macros [net.cgrand.macrovich :as macros]
+  ;                     [dat.sync.db :refer [function def-dbfn]])))
+                      
 
 (s/def ::kind keyword?)
 
@@ -131,9 +132,9 @@
         `(def ~sym
           (function
             {:lang "clojure"
-            :requires ~requires
-            :params ~params
-           :code ~@body}))))))
+             :requires ~requires
+             :params ~params
+             :code ~@body}))))))
 
 (defn dbfn-with-api [f db-api]
   (fn [db & args]

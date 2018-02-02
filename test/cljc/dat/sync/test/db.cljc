@@ -5,11 +5,7 @@
    [dat.sync.db.datahike   :as dh]
    #?(:clj [dat.sync.db.datomic    :as da])
    [clojure.spec.alpha :as s]
-    ;;      #?(:cljs [cljs.test    :as t :refer-macros [is are deftest testing]]
-    ;;        :clj  [clojure.test :as t :refer        [is are deftest testing]])
    [clojure.test :as t :refer [is are deftest testing]]))
-
-;; TODO: once datahike is updated in clojars we can run cljs tests again. So need to remove reader conditionals for datahike tests.
 
 (s/check-asserts true)
 
@@ -42,31 +38,37 @@
                 ::friend [[::name "Spider Guy"]]}
                {::name "The Verve"}])))
 
-(defn entity-named [db n]
+;;;
+;;; dbfns
+;;;
+(defn entity-named
+  "Creates a new entity with the given name."
+  [db n]
   [{::name n}])
 
-(defn indirect-dbfn-entity-named [db n]
+(defn indirect-dbfn-entity-named
+  "Calls entity-named as a dbfn"
+  [db n]
   [[::entity-named n]])
 
 (defn indirect-fn-entity-named
+  "Calls entity-named as a plain fn"
   [db n]
   (entity-named db n))
 
-(defn query-and-set-monkey [db]
+(defn query-and-set-monkey
+  "Queries for entity named 'Mr Bosco' and changes his name to 'Bosco 2 Boogalooo' "
+  [db]
   (let [entity (d/pull db '[*] [::name "Mr Bosco"])]
     [[:db/retract (:db/id entity) ::name "Mr Bosco"]
      [:db/add (:db/id entity) ::name "Bosco 2 Boogaloo"]]))
 
-(defn- with-fns [db]
-  (->
-   db
-   (d/db-with [{:db/ident ::name
-                :db/valueType [:db/ident :db.type/string]
-                :db/cardinality [:db/ident :db.cardinality/one]
-                :db/unique [:db/ident :db.unique/identity]}])
-   (d/db-with [])))
-
-(defn- test-conn [conn db]
+;;
+;;
+;;
+(defn- test-conn
+  "Make sure that the api's are hooked in properly and predicate multimethods are implemented"
+  [conn db]
   (is (d/conn? conn))
   (is (d/db? (d/db conn)))
   (is (d/db? db))
@@ -89,7 +91,12 @@
            db (da/empty-db)]
        (test-conn conn db))))
 
-(defn- test-base-schema [db]
+;;
+;;
+;;
+(defn- test-base-schema
+  "Make sure base-schema is present in the db"
+  [db]
   (is (= (unique db [:db/ident :db/ident]) :db.unique/identity)))
 
 (deftest test-base-schema-datascript
@@ -103,7 +110,12 @@
    (deftest test-base-schema-datomic
      (test-base-schema (da/empty-db))))
 
-(defn- test-keyword-lookup-ref [db]
+;;
+;;
+;;
+(defn- test-keyword-lookup-ref
+  "Can you refer to a :db/ident'd entity with a :keyword-name rather than an eid or [:lookup :ref]"
+  [db]
   (is (= (d/entity db :db/ident) (d/entity db [:db/ident :db/ident])))
   (is (= (d/pull db '[*] :db/ident) (d/pull db '[*] [:db/ident :db/ident]))))
 
@@ -120,7 +132,12 @@
    (deftest test-keyword-lookup-ref-datomic
      (test-keyword-lookup-ref (da/empty-db))))
 
-(defn- test-ident->keyword [db]
+;;
+;;
+;;
+(defn- test-ident->keyword
+  "When you use entity api on a schema ref like :db/unqique you should get back a :keyword instead of an eid"
+  [db]
   (is (= (:db/unique (d/entity db :db/ident)) :db.unique/identity)))
 
 (comment
@@ -138,7 +155,12 @@
    (deftest test-ident->keyword-datomic
      (test-ident->keyword (da/empty-db))))
 
-(defn- test-alias [db]
+;;
+;;
+;;
+(defn- test-alias 
+  ":db/ident's have special properties. You can assign more than one :db/ident to the same attr to get an alias effect"
+  [db]
   (let [troop (with-monkeys db)
         mr-bosco [::name "Mr Bosco"]]
     (is (= (::friend (d/entity troop mr-bosco))
@@ -158,17 +180,18 @@
    (deftest test-alias-datomic
      (test-alias (da/empty-db))))
 
-
-
 (deftest test-function
   (let []
     (is (= (entity-named    nil "name")  [{::name    "name"}]))
     (is (= (indirect-dbfn-entity-named nil "name") [[::entity-named "name"]]))
     (is (= (indirect-fn-entity-named nil "name")  [{::name    "name"}]))))
 
-
-
-(defn test-dbfn [db]
+;;
+;;
+;;
+(defn- test-dbfn 
+  "Can you call dbfns"
+  [db]
   (let [db (with-monkeys db)
         test-name "Jimmy"]
     (is (= test-name
@@ -184,39 +207,42 @@
 
 (deftest test-dbfn-datascript
   (let [conn (ds/create-conn)]
-    (ds/reg-dbfn! conn {:f ::indirect-dbfn-entity-named
-                        :params [db n]})
-    (ds/reg-dbfn! conn {:f ::entity-named
-                        :params [db n]})
-    (ds/reg-dbfn! conn {:f ::indirect-fn-entity-named
-                        :params [db n]})
+    (ds/install-dbfn! conn {:f ::indirect-dbfn-entity-named
+                            :params [db n]})
+    (ds/install-dbfn! conn {:f ::entity-named
+                            :params [db n]})
+    (ds/install-dbfn! conn {:f ::indirect-fn-entity-named
+                            :params [db n]})
     (test-dbfn (d/db conn))))
 
 #?(:clj
    (deftest test-dbfn-datahike
-    (let [conn (dh/create-conn)]
-      (dh/reg-dbfn! conn {:f ::indirect-dbfn-entity-named
-                          :params [db n]})
-      (dh/reg-dbfn! conn {:f ::entity-named
-                          :params [db n]})
-      (dh/reg-dbfn! conn {:f ::indirect-fn-entity-named
-                          :params [db n]})
-      (test-dbfn (d/db conn)))))
+     (let [conn (dh/create-conn)]
+       (dh/install-dbfn! conn {:f ::indirect-dbfn-entity-named
+                               :params [db n]})
+       (dh/install-dbfn! conn {:f ::entity-named
+                               :params [db n]})
+       (dh/install-dbfn! conn {:f ::indirect-fn-entity-named
+                               :params [db n]})
+       (test-dbfn (d/db conn)))))
 
 #?(:clj
    (deftest test-dbfn-datomic
-    (let [conn (da/create-conn)]
-      (da/reg-dbfn! conn {:f ::indirect-dbfn-entity-named
-                          :params [db n]})
-      (da/reg-dbfn! conn {:f ::entity-named
-                          :params [db n]})
-      (da/reg-dbfn! conn {:f ::indirect-fn-entity-named
-                          :params [db n]})
-      (test-dbfn (d/db conn)))))
+     (let [conn (da/create-conn)]
+       (da/install-dbfn! conn {:f ::indirect-dbfn-entity-named
+                               :params [db n]})
+       (da/install-dbfn! conn {:f ::entity-named
+                               :params [db n]})
+       (da/install-dbfn! conn {:f ::indirect-fn-entity-named
+                               :params [db n]})
+       (test-dbfn (d/db conn)))))
 
-
-
-(defn test-dbfn-with-queries [db]
+;;
+;;
+;;
+(defn- test-dbfn-with-queries 
+  "make sure you can use d/pull etc within a dbfn"
+  [db]
   (is
    (-> db
        with-monkeys
@@ -225,21 +251,21 @@
 
 (deftest test-dbfn-with-queries-datascript
   (let [conn (ds/create-conn)]
-    (ds/reg-dbfn! conn {:f ::query-and-set-monkey
-                        :params [db]})
+    (ds/install-dbfn! conn {:f ::query-and-set-monkey
+                            :params [db]})
     (test-dbfn-with-queries (d/db conn))))
 
 #?(:clj
    (deftest test-dbfn-with-queries-datahike
      (let [conn (dh/create-conn)]
-       (dh/reg-dbfn! conn {:f ::query-and-set-monkey
-                           :params [db]})
+       (dh/install-dbfn! conn {:f ::query-and-set-monkey
+                               :params [db]})
        (test-dbfn-with-queries (d/db conn)))))
 
 #?(:clj
    (deftest test-dbfn-with-queries-datomic
      (let [conn (da/create-conn)]
-       (da/reg-dbfn! conn {:f ::query-and-set-monkey
-                           :params [db]})
+       (da/install-dbfn! conn {:f ::query-and-set-monkey
+                               :params [db]})
        (test-dbfn-with-queries (d/db conn)))))
 

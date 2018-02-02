@@ -44,7 +44,7 @@
       d/db
       (db/inject-db-api db-api)))
 
-(defmacro reg-dbfn! [conn {:keys [f params requires]}]
+(defmacro install-dbfn! [conn {:keys [f params requires]}]
   `(db/transact!
     ~conn
     [{:db/fn (d/function
@@ -54,6 +54,6 @@
                              [['dat.sync.db]
                               ['dat.sync.db.datomic]
                               [(symbol (namespace f))]]
-                              requires)
+                             requires)
                  :code   (apply (dat.sync.db/dbfn-with-api ~(symbol (namespace f) (name f)) dat.sync.db.datomic/db-api) ~params)})
       :db/ident ~(keyword (namespace f) (name f))}]))
