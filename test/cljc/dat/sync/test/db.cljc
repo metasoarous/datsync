@@ -42,16 +42,15 @@
                 ::friend [[::name "Spider Guy"]]}
                {::name "The Verve"}])))
 
-(d/def-dbfn test-fn [db n]
+(defn entity-named [db n]
   [{::name n}])
 
-(d/def-dbfn indirection [db n]
-  [[::test-fn n]])
+(defn indirect-dbfn-entity-named [db n]
+  [[::entity-named n]])
 
-(d/def-dbfn local-call
-  {:requires [[dat.sync.test.db :refer [test-fn]]]}
+(defn indirect-fn-entity-named
   [db n]
-  (test-fn db n))
+  (entity-named db n))
 
 (defn query-and-set-monkey [db]
   (let [entity (d/pull db '[*] [::name "Mr Bosco"])]
@@ -65,12 +64,7 @@
                 :db/valueType [:db/ident :db.type/string]
                 :db/cardinality [:db/ident :db.cardinality/one]
                 :db/unique [:db/ident :db.unique/identity]}])
-   (d/db-with [{:db/ident ::test-fn
-                :db/fn test-fn}
-               {:db/ident ::indirection
-                :db/fn indirection}
-               {:db/ident ::local-call
-                :db/fn local-call}])))
+   (d/db-with [])))
 
 (defn- test-conn [conn db]
   (is (d/conn? conn))
@@ -164,61 +158,88 @@
    (deftest test-alias-datomic
      (test-alias (da/empty-db))))
 
+
+
 (deftest test-function
   (let []
-    (is (= (test-fn    nil "name")  [{::name    "name"}]))
-    (is (= (indirection nil "name") [[::test-fn "name"]]))
-    (is (= (local-call nil "name")  [{::name    "name"}]))))
+    (is (= (entity-named    nil "name")  [{::name    "name"}]))
+    (is (= (indirect-dbfn-entity-named nil "name") [[::entity-named "name"]]))
+    (is (= (indirect-fn-entity-named nil "name")  [{::name    "name"}]))))
 
-(defn test-function-indirection [db]
-  (let [db (with-fns db)
+
+
+(defn test-dbfn [db]
+  (let [db (with-monkeys db)
         test-name "Jimmy"]
     (is (= test-name
            (-> db
-               (d/db-with [[::indirection test-name]])
+               (d/db-with [[::indirect-dbfn-entity-named test-name]])
                (d/entity [::name test-name])
                ::name)))
     (is (= test-name
            (-> db
-               (d/db-with [[::local-call test-name]])
+               (d/db-with [[::indirect-fn-entity-named test-name]])
                (d/entity [::name test-name])
                ::name)))))
 
-(deftest test-function-indirection-datascript
-  (test-function-indirection (ds/empty-db)))
+(deftest test-dbfn-datascript
+  (let [conn (ds/create-conn)]
+    (ds/reg-dbfn! conn {:f ::indirect-dbfn-entity-named
+                        :params [db n]})
+    (ds/reg-dbfn! conn {:f ::entity-named
+                        :params [db n]})
+    (ds/reg-dbfn! conn {:f ::indirect-fn-entity-named
+                        :params [db n]})
+    (test-dbfn (d/db conn))))
 
 #?(:clj
-   (deftest test-function-indirection-datahike
-     (test-function-indirection (dh/empty-db))))
+   (deftest test-dbfn-datahike
+    (let [conn (dh/create-conn)]
+      (dh/reg-dbfn! conn {:f ::indirect-dbfn-entity-named
+                          :params [db n]})
+      (dh/reg-dbfn! conn {:f ::entity-named
+                          :params [db n]})
+      (dh/reg-dbfn! conn {:f ::indirect-fn-entity-named
+                          :params [db n]})
+      (test-dbfn (d/db conn)))))
 
 #?(:clj
-   (deftest test-function-indirection-datomic
-     (test-function-indirection (da/empty-db))))
+   (deftest test-dbfn-datomic
+    (let [conn (da/create-conn)]
+      (da/reg-dbfn! conn {:f ::indirect-dbfn-entity-named
+                          :params [db n]})
+      (da/reg-dbfn! conn {:f ::entity-named
+                          :params [db n]})
+      (da/reg-dbfn! conn {:f ::indirect-fn-entity-named
+                          :params [db n]})
+      (test-dbfn (d/db conn)))))
 
-(defn test-function-with-queries [db]
+
+
+(defn test-dbfn-with-queries [db]
   (is
    (-> db
        with-monkeys
        (d/db-with [[::query-and-set-monkey]])
        (d/entity [::name "Bosco 2 Boogaloo"]))))
 
-(deftest test-function-with-queries-datascript
+(deftest test-dbfn-with-queries-datascript
   (let [conn (ds/create-conn)]
     (ds/reg-dbfn! conn {:f ::query-and-set-monkey
                         :params [db]})
-    (test-function-with-queries (d/db conn))))
+    (test-dbfn-with-queries (d/db conn))))
 
 #?(:clj
-   (deftest test-function-with-queries-datahike
+   (deftest test-dbfn-with-queries-datahike
      (let [conn (dh/create-conn)]
        (dh/reg-dbfn! conn {:f ::query-and-set-monkey
                            :params [db]})
-       (test-function-with-queries (d/db conn)))))
+       (test-dbfn-with-queries (d/db conn)))))
 
 #?(:clj
-   (deftest test-function-with-queries-datomic
+   (deftest test-dbfn-with-queries-datomic
      (let [conn (da/create-conn)]
        (da/reg-dbfn! conn {:f ::query-and-set-monkey
                            :params [db]})
-       (test-function-with-queries (d/db conn)))))
+       (test-dbfn-with-queries (d/db conn)))))
 
