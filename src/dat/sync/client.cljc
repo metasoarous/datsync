@@ -717,12 +717,12 @@
 ;; Triggers
 (reactor/register-handler
   ::send-remote-tx
-  (fn [app db [_ tx tx-meta]]
+  (fn [app db [_ tx]]
     (let [translated-tx (remote-tx db tx)]
       ;; log directly in handler function to make sure a failure doesn't preclude log execution
       (log/info "Sending tx:" (pr-str (take 100 translated-tx)) "...")
       (reactor/resolve-to app db
-        [[:dat.remote/send-event! [:dat.sync.remote/tx translated-tx tx-meta]]]))))
+        [[:dat.remote/send-event! [:dat.sync.remote/tx translated-tx]]]))))
 
 (reactor/register-handler
   :dat.remote/connected
