@@ -24,10 +24,12 @@
                  [datascript "0.15.5"]
 
                  [com.taoensso/timbre "4.8.0"]
-                 [com.taoensso/sente "1.11.0"]
+                 [com.taoensso/sente "1.13.0"]
+                 ;; TODO need to switch to this soon for security reasons
+                 ;[com.taoensso/sente "1.14.0-RC2"]
                  [com.taoensso/encore "2.88.2"]
-                 [com.cognitect/transit-clj "0.8.297"]
-                 [com.cognitect/transit-cljs "0.8.239"]
+                 [com.cognitect/transit-clj "0.8.313" :exclusions [commons-codec]]
+                 [com.cognitect/transit-cljs "0.8.256"]
 
                  ;; Server db (datomic)
                  [com.datomic/datomic-free "0.9.5544" :exclusions [joda-time com.google.guava/guava]]
