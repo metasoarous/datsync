@@ -123,7 +123,9 @@
         (log/error "Exception handling :chsk/state:" e)))))
 
 (reactor/register-handler :chsk/ws-ping
-  (fn [& args] true))
+  (fn [app db message]
+    (log/info "staying alive")
+    db))
 
 (reactor/register-handler
   :chsk/handshake
