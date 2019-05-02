@@ -21,7 +21,7 @@
 
                  [reagent "0.6.0"]
                  ;[re-frame "0.9.1"]
-                 [datascript "0.15.5"]
+                 [datascript "0.18.2"]
 
                  [com.taoensso/timbre "4.8.0"]
                  [com.taoensso/sente "1.13.0"]
