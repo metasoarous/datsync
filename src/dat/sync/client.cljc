@@ -7,6 +7,7 @@
             [dat.reactor :as reactor]
             [dat.reactor.dispatcher :as dispatcher]
             [dat.sync.utils :as utils]
+            [dat.sync]
             [datascript.core :as d]
             [com.stuartsierra.component :as component]
             [taoensso.timbre :as log #?@(:cljs [:include-macros true])]))
@@ -507,7 +508,7 @@
         translated-tx (d/q '[:find ?op ?dat-e ?a ?dat-v
                              :in % $ [[?op ?e ?a ?v]]
                              :where [(get-else $ ?e :dat.sync.remote.db/id ?e) ?dat-e]
-                             (remote-value-trans ?v ?a ?dat-v)]
+                                    (remote-value-trans ?v ?a ?dat-v)]
                            ;; Really want to be able to do an or clause here to get either the value back
                            ;; unchanged, or the reference :dat.sync.remote.db/id if a ref attribute
                            ;; Instead I'll use rules...
@@ -741,16 +742,41 @@
       ;; This message will fire once the reaction has complete (that is, once the data is bootstrapped; It' lets you decide how your application
       [[:dat.remote/send-event! [::bootstrap true]]])))
 
+
+;; TODO This really needs some overhaul in the new system
+;; * based on subscriptions
+;; 
+
+
+
+
 (reactor/register-handler
   ::bootstrap
-  (fn [app db [_ tx-data]]
+  (fn [app db [_ data]]
     ;; Possibly flag some state somewhere saying bootstrap has taken place?
-    (log/info "Recieved bootstrap!" (take 10 tx-data))
-    (reactor/with-effect
-      ;; This message will fire once the reaction has complete (that is, once the data is bootstrapped; It' lets you decide how your application
-      [:dat.reactor/dispatch! [:dat.sync.client.bootstrap/complete? true]]
-      (reactor/resolve-to app db
-        [[::recv-remote-tx tx-data]]))))
+    (log/info "Recieved bootstrap!")
+    (let [bootstrapped-db
+          (cond
+            ;; if it's a ds db, serialized with transit, then we can just return this
+            (d/db? data) (do (log/info "got a fully-backed transit db") data)
+            ;; If a map, treat it as map of {:schema :eav}
+            ;; TODO Generalize this to keep the things we might have already created client side. Reapply the
+            ;; indexing function?
+            (map? data) (let [_ (log/info "processing map form bootstrap")
+                              new-db (dat.sync/hydrate-bootstrap data)
+                              _ (log/info "bootstrap eav index ingested as db")]
+                          new-db)
+            ;; Otherwise treat it as a tx
+            :else (do
+                    (log/info "treating bootstrap as tx")
+                    (reactor/resolve-to app db
+                      [[::recv-remote-tx data]])))]
+      (reactor/with-effect
+        ;; This message will fire once the reaction has complete (that is, once the data is bootstrapped; It' lets you decide how your application
+        [:dat.reactor/dispatch! [:dat.sync.client.bootstrap/complete? true]]
+        bootstrapped-db))))
+
+
 
 
 

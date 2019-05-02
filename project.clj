@@ -30,6 +30,7 @@
                  [com.taoensso/encore "2.88.2"]
                  [com.cognitect/transit-clj "0.8.313" :exclusions [commons-codec]]
                  [com.cognitect/transit-cljs "0.8.256"]
+                 [datascript-transit "0.3.0"]
 
                  ;; Server db (datomic)
                  [com.datomic/datomic-free "0.9.5544" :exclusions [joda-time com.google.guava/guava]]

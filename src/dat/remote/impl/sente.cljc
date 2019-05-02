@@ -9,6 +9,7 @@
             [com.stuartsierra.component :as component]
             [taoensso.timbre :as log #?@(:cljs [:include-macros true])]
             [taoensso.sente :as sente]
+            [datascript.transit :as ds-transit]
             [taoensso.sente.packers.transit :as sente-transit]))
 
 
@@ -25,7 +26,9 @@
 (def default-sente-options
   {:chsk-route "/chsk"
    :type :auto
-   :packer (sente-transit/get-transit-packer)})
+   :packer (sente-transit/get-transit-packer :json
+                                             {:handlers ds-transit/write-handlers}
+                                             {:handlers ds-transit/read-handlers})})
 
 
 (defrecord SenteRemote [chsk ch-recv out-chan send-fn state open? sente-options]
