@@ -753,10 +753,16 @@
             :else (do
                     (log/info "treating bootstrap as tx")
                     (reactor/resolve-to app db
-                      [[::recv-remote-tx data]])))]
-      (reactor/with-effect
+                      [[::recv-remote-tx data]])))
+          tx-report {:db-before db
+                     :db-after bootstrapped-db
+                     :tx-data (d/datoms bootstrapped-db :eavt)
+                     :tempids {}
+                     :tx-meta nil}]
+      (reactor/with-effects
         ;; This message will fire once the reaction has complete (that is, once the data is bootstrapped; It' lets you decide how your application
-        [:dat.reactor/dispatch! [:dat.sync.client.bootstrap/complete? true]]
+        [[:dat.reactor/dispatch! [:dat.sync.client.bootstrap/complete? true]]
+         [:dat.reactor/execute-tx-report-handlers! tx-report]]
         bootstrapped-db))))
 
 
