@@ -9,8 +9,9 @@
 
 (defn deep-merge
   ([map1] map1)
-  ([map1 map2]
-   (merge-with inner-merge map1 map2)))
+  ([map1 map2 & maps]
+   (reduce (partial merge-with inner-merge)
+           (concat [map1 map2] maps))))
 
 (defn inner-merge-dispatch-signature
   [x]

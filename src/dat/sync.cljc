@@ -1,5 +1,6 @@
 (ns dat.sync
   (:require [datascript.core :as ds]
+            [dat.sync.utils :as utils]
             [taoensso.timbre :as log :include-macros true]))
 
 (defn eav-to-datoms
@@ -127,6 +128,8 @@
   ([current-db {:keys [eav schema] :as bootstrap}]
    (log/info "some eavs:" (take 40 eav))
    (let [eav-datoms (eav-to-datoms schema eav)
+         ;; merge in schema
+         schema (utils/deep-merge base-schema (:schema current-db) schema)
          _ (log/info "some eav datoms:" (take 20 eav-datoms))
          ds-db (ds/init-db eav-datoms schema)]
      (log/info "done re-hydrating database")
