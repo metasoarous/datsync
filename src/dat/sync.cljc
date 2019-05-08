@@ -105,6 +105,23 @@
         ;tx (ds/datoms db2)]
     ;(ds/db-with db1 tx)))
 
+(def base-schema
+  "The base satsync schema"
+  ;; So we can use idents more effectively
+  {:dat.sync.tx/origin {:db/doc "The origin of the transaction. Should be either :dat.sync.tx.origin/remote or .../local"}
+   :dat.sync.remote.db/id {:db/unique :db.unique/identity
+                           :db/doc "The eid of the entity on the remote."}
+   :dat.sync/diff {:db/valueType :db.type/ref
+                   :db/doc "An entity that represents all of the persisted changes to an entity that have not been confirmed yet."}
+   :db/valueType {:db/valueType :db.type/ref}
+   :db/unique {:db/valueType :db.type/ref}
+   :db/cardinality {:db/valueType :db.type/ref}
+   :e/type {:db/valueType :db.type/ref}
+   :attribute.ref/types {:db/valueType :db.type/ref
+                         :db/cardinality :db.cardinality/many}
+   ;; Navigration on the client; I guess the server may need to know this as well for it's scope... Maybe
+   ;; redundant...
+   :dat.sync/route {}})
 
 (defn hydrate-bootstrap
   ([current-db {:keys [eav schema] :as bootstrap}]

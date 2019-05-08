@@ -76,23 +76,6 @@
 ;; DataScript compatible schema representation to get what aspects of the schema are supported.
 ;; However, we'll still keep this data as datoms as well, for queryability.
 
-(def base-schema
-  "The base satsync schema"
-  ;; So we can use idents more effectively
-  {:dat.sync.tx/origin {:db/doc "The origin of the transaction. Should be either :dat.sync.tx.origin/remote or .../local"}
-   :dat.sync.remote.db/id {:db/unique :db.unique/identity
-                           :db/doc "The eid of the entity on the remote."}
-   :dat.sync/diff {:db/valueType :db.type/ref
-                   :db/doc "An entity that represents all of the persisted changes to an entity that have not been confirmed yet."}
-   :db/valueType {:db/valueType :db.type/ref}
-   :db/unique {:db/valueType :db.type/ref}
-   :db/cardinality {:db/valueType :db.type/ref}
-   :e/type {:db/valueType :db.type/ref}
-   :attribute.ref/types {:db/valueType :db.type/ref
-                         :db/cardinality :db.cardinality/many}
-   ;; Navigration on the client; I guess the server may need to know this as well for it's scope... Maybe
-   ;; redundant...
-   :dat.sync/route {}})
 
 ;; Going to rewrite this function; Wanted to make it more of a straight execution of a query for the new
 ;; schema based on a (d/q '[:find (pull ...)]) & d/with.
@@ -788,7 +771,7 @@
   (start [component]
     (let [remote-chan (remote/event-chan remote)]
       (log/info "Starting Datsync component")
-      (dispatcher/dispatch! dispatcher [::merge-schema base-schema])
+      (dispatcher/dispatch! dispatcher [::merge-schema dat.sync/base-schema])
       ;; This should get triggered by successful connection to the websocket
       (log/info "Dispatched schema changes")
       (go-loop []
