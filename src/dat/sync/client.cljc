@@ -746,7 +746,7 @@
             ;; TODO Generalize this to keep the things we might have already created client side. Reapply the
             ;; indexing function?
             (map? data) (let [_ (log/info "processing map form bootstrap")
-                              new-db (dat.sync/hydrate-bootstrap data)
+                              new-db (dat.sync/hydrate-bootstrap db data)
                               _ (log/info "bootstrap eav index ingested as db")]
                           new-db)
             ;; Otherwise treat it as a tx
