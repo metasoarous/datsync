@@ -288,63 +288,72 @@
 ;; based approach. Will need to seriously rewrite and rethink this whole section. I think it's going to put a lot more of
 ;; the onux on tracking the
 
-(defn get-ref-attrs-for-mapping
-  "Returns all reference attribute idents that exist in database ..."
-  [db tx]
-  ;; The valueType is a ref type; so it's pointing to an entity with :db/ident :db.type/ref
-  (let [db-ref-type-remote-eid (or ;; XXX Uhh... shouldn't there be something else in this or?
-                                   ;; Specifically we should have here something that gets the...
-                                   ;; Wait... maybe we don't need this in the identities version because we'll only have
-                                   ;; eids on first payload (bootstrap). Everything else will resolve with lookups...
-                                   ;(???)
-                                   ;; If we don't already have something in the db, look for an (:db/ident
-                                   ;; :db.type/ref) pair in tx-forms. (note: this means we have to note that
-                                   ;; refs need to be references as value types based on an attribute in
-                                   ;; schema transaction application, till fixed XXX)
-                                   (some (fn [[eid tx-forms]]
-                                           (when (some (fn [[op e a v t :as tx-form]]
-                                                         (and (= a :db/ident)
-                                                              (= v :db.type/ref)))
-                                                       tx-forms)
-                                             eid))
-                                         (group-by second tx)))
-        tx-attr-idents (set (map #(nth % 2) tx))]
-    (set
-      ;; There is an assumption here that references attributes must be specified as complete transactions,
-      ;; and can't be build up in separate transactions... So no changing to/from ref types XXX
-      (concat
-        ;; Anything that looks like a reference attribute in the existing db
-        ;; TODO Should get this from the (:schema db) instead, since this is more general, and doesn't force persisting of schema;
-        ;; Though maybe this is necessary elsewhere? Need to at least consider doing this...
-        (d/q '[:find [?attr-ident ...]
-               :in $ [?attr-ident ...] ?ref-type-remote-eid
-               :where [?attr :db/ident ?attr-ident]
-                      [?attr :db/valueType ?ref-type]
-                      [?ref-type :dat.sync.remote.db/id ?ref-type-remote-eid]]
-             db
-             tx-attr-idents
-             db-ref-type-remote-eid)
-        ;; Anything that looks like a reference attribute in the new tx
-        (->> tx
-             (group-by second)
-             (keep
-               (fn [[eid tx-forms]]
-                 ;; some transaction form for an entity that looks like it's defining a reference attribute
-                 (when (some
-                         (fn [[op e a v :as tx-form]]
-                           (and (= a :db/valueType)
-                                (= v db-ref-type-remote-eid)))
-                         tx-forms)
-                   ;; given we think this is a reference attribute, lets get the ident;
-                   ;; Regarding above comment about reference attributes; this is where we need
-                   ;; :db/ident in part of the tx... unless we want to fix it... XXX
-                   (some
-                     (fn [[op e a v :as tx-form]]
-                       ;; returns the :db/ident, which passes up through the somes and keeps
-                       ;; above
-                       (when (= a :db/ident) v))
-                     tx-forms)))))))))
+;(defn get-ref-attrs-for-mapping
+  ;"Returns all reference attribute idents that exist in database ..."
+  ;[db tx]
+  ;;; The valueType is a ref type; so it's pointing to an entity with :db/ident :db.type/ref
+  ;(let [db-ref-type-remote-eid (or ;; XXX Uhh... shouldn't there be something else in this or?
+                                   ;;; Specifically we should have here something that gets the...
+                                   ;;; Wait... maybe we don't need this in the identities version because we'll only have
+                                   ;;; eids on first payload (bootstrap). Everything else will resolve with lookups...
+                                   ;;(???)
+                                   ;;; If we don't already have something in the db, look for an (:db/ident
+                                   ;;; :db.type/ref) pair in tx-forms. (note: this means we have to note that
+                                   ;;; refs need to be references as value types based on an attribute in
+                                   ;;; schema transaction application, till fixed XXX)
+                                   ;(some (fn [[eid tx-forms]]
+                                           ;(when (some (fn [[op e a v t :as tx-form]]
+                                                         ;(and (= a :db/ident)
+                                                              ;(= v :db.type/ref)))
+                                                       ;tx-forms)
+                                             ;eid))
+                                         ;(group-by second tx)))
+        ;tx-attr-idents (set (map #(nth % 2) tx))]
+    ;(set
+      ;;; There is an assumption here that references attributes must be specified as complete transactions,
+      ;;; and can't be build up in separate transactions... So no changing to/from ref types XXX
+      ;(concat
+        ;;; Anything that looks like a reference attribute in the existing db
+        ;;; TODO Should get this from the (:schema db) instead, since this is more general, and doesn't force persisting of schema;
+        ;;; Though maybe this is necessary elsewhere? Need to at least consider doing this...
+        ;(d/q '[:find [?attr-ident ...]
+               ;:in $ [?attr-ident ...] ?ref-type-remote-eid
+               ;:where [?attr :db/ident ?attr-ident]
+                      ;[?attr :db/valueType ?ref-type]
+                      ;[?ref-type :dat.sync.remote.db/id ?ref-type-remote-eid]]
+             ;db
+             ;tx-attr-idents
+             ;db-ref-type-remote-eid)
+        ;;; Anything that looks like a reference attribute in the new tx
+        ;(->> tx
+             ;(group-by second)
+             ;(keep
+               ;(fn [[eid tx-forms]]
+                 ;;; some transaction form for an entity that looks like it's defining a reference attribute
+                 ;(when (some
+                         ;(fn [[op e a v :as tx-form]]
+                           ;(and (= a :db/valueType)
+                                ;(= v db-ref-type-remote-eid)))
+                         ;tx-forms)
+                   ;;; given we think this is a reference attribute, lets get the ident;
+                   ;;; Regarding above comment about reference attributes; this is where we need
+                   ;;; :db/ident in part of the tx... unless we want to fix it... XXX
+                   ;(some
+                     ;(fn [[op e a v :as tx-form]]
+                       ;;; returns the :db/ident, which passes up through the somes and keeps
+                       ;;; above
+                       ;(when (= a :db/ident) v))
+                     ;tx-forms)))))
 
+;; This is a much cleaner and simpler implementation of the above, but
+;; * is specific to datascript, relying on `(:schema db)`
+;; * does not take into account the possibility of new schema in tx
+;;
+;; For the latter, thinking it makes sense to move towards handling these changes explicitly as a separate part of the processing flow, so that by the time they get here, the db schema has already been updated
+;; Generalization to other kind of dbs will have to come later as well
+(defn get-ref-attrs-for-mapping
+  [db]
+  (->> db :schema (filter (fn [[ident schema]] (= (:db/valueType schema) :db.type/ref))) (map first) set))
 
 (defn make-eid-mapping
   "Creates a map of remote eids to local eids for any id in the tx, providing consistent tempids where needed"
@@ -357,7 +366,8 @@
             {}
             (group-by second tx))
         ;; Then get this for translating reference values below
-        ref-attribute-idents (get-ref-attrs-for-mapping db tx)]
+        ref-attribute-idents (get-ref-attrs-for-mapping db)
+        ref-attribute-idents (->> db :schema (filter (fn [[ident schema]] (= (:db/valueType schema) :db.type/ref))) (map first) set)]
     ;; Now translate reference values
     (->> tx
          ;; First, filter to just the tx-forms for attributes which are in ref-attribute-idents
@@ -377,7 +387,7 @@
   [db tx]
   (log/debug "Calling translate-eids")
   (let [eid-mapping (make-eid-mapping db tx)
-        ref-attribute-idents (get-ref-attrs-for-mapping db tx)]
+        ref-attribute-idents (get-ref-attrs-for-mapping db)]
     (vec (concat
            ;; First map over all the tx-forms and modify any eids
            (mapv
@@ -684,6 +694,7 @@
     (let [new-schema (utils/deep-merge (:schema db) schema)
           new-db (replace-schema db new-schema)]
       new-db)))
+
 
 ;; May need to separate the schema and the "other" data, but for now, we'll leave it at this
 (reactor/register-handler
