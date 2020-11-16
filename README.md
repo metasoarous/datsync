@@ -38,7 +38,7 @@ But for the sake of thoroughness, we'll cover here how you'd set things up.
 First, add the following to your `project.clj`:
 
 ```
-[datsync "0.0.1-alpha2-SNAPSHOT"]
+[datsync "0.0.1-alpha3"]
 ```
 
 
