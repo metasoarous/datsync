@@ -5,6 +5,17 @@ Datomic &lt;-> DataScript syncing/replication utilities
 
 [![Gitter](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/metasoarous/datsync?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
+## Status
+
+You may be able to get some of this stuff to work for basic prototyping pruposes, but had to more or less drop this project due to other demands (family, [occupational](https://github.com/compdemocracy) and other [open source projects](https://github.com/metasoarous) (in particular, [Oz](https://github.com/metasoarous/oz)).
+
+I do hope to get back to it in the near future, once things settle down with the latest version of Oz, but don't expect a ton out of this project at the moment unless you're willing to get your hands dirty.
+
+Thanks
+
+
+<br/>
+
 
 
 ## Introduction
